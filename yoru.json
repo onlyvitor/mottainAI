@@ -2,14 +2,16 @@
   "defaults": {
     "tier": "MEDIUM",
     "budget": {
-      "dailyUsd": 10.00,
-      "perRequestUsd": 0.10
+      "dailyUsd": 10.0,
+      "perRequestUsd": 0.1
     }
   },
   "rules": [],
   "blocked": [],
   "fallback": ["gemini-2.5-flash", "deepseek-v4-flash"],
-  "providers": {},
+  "providers": {
+    "google": { "apiKey": "AIzaSyA0k1g5J8x3v6y7z8w9x0y1z2a3b4c5d6e" }
+  },
   "systemPrompt": "You are Mottainai, an AI coding assistant. You have access to tools for reading, writing, and editing files, running shell commands, and searching code. Use tools to investigate and modify code as needed.",
   "maxSteps": 20
 }
