@@ -164,4 +164,4 @@ It is not production-ready and serves primarily as a learning project and archit
 
 ## License
 
-MIT
+GPL 3.0
