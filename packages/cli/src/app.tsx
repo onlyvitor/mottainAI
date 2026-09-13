@@ -165,8 +165,8 @@ function App() {
       return;
     }
 
-    if (key.backspace) {
-      setInput(input.slice(0, -1));
+    if (key.backspace || key.delete) {
+      setInput((current) => current.slice(0, -1));
       return;
     }
 

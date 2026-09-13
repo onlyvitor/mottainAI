@@ -1,89 +1,166 @@
-# Mottainai
+# mottainAI
 
-AI coding harness with built-in cost routing. Routes every LLM request to the cheapest capable model, saving 40-70% on token spend.
+<img src="https://pbs.twimg.com/media/HSEJyF_X0AYXlno?format=jpg&name=large" alt="AI girls" width=500px style="display: block; margin: left auto; margin-right: auto;">
 
-## What it does
+Terminal-based AI coding assistant with cost-aware model routing.
 
-Mottainai is a terminal-based AI coding assistant (like aider/opencode) with an integrated cost router that automatically selects the cheapest model for each task:
+## Overview
 
-- **Simple tasks** (formatting, Q&A) → DeepSeek V4 Flash ($0.14/M tokens)
-- **Medium tasks** (code generation, refactoring) → Gemini 3.1 Pro ($1.38/M)
-- **Complex tasks** (reasoning, architecture) → Claude Opus 4.8 ($5.00/M)
+mottainAI is a CLI interface for AI-assisted coding that routes LLM requests to different models based on task complexity. The system analyzes each prompt using a 14-dimension keyword classifier and selects the cheapest capable model for the job.
 
-The router uses a 14-dimension complexity classifier that runs in <1ms with no LLM call.
+This project was developed as a personal experiment exploring software development with assistance from language models—not as a demonstration that AI replaces developers, but as a practical exploration of human-AI collaborative development.
 
-## Features
+## What It Does
 
-- Multi-provider support: OpenAI, Anthropic, Google, DeepSeek, Ollama
-- Hybrid routing: complexity analysis + user rules + automatic fallback
-- Built-in tools: read, write, edit, bash, grep, glob, webfetch
-- Subagent spawning for focused tasks
-- Real-time cost tracking per session
-- Configurable budget limits and routing rules
+The core feature is **complexity-based routing**: before sending any request to an LLM, the system classifies the task into one of four tiers:
 
-## Install
+- **SIMPLE** — Quick queries, definitions, basic questions → cheapest available models
+- **MEDIUM** — Code generation, refactoring, standard tasks → mid-tier models
+- **COMPLEX** — Multi-step tasks requiring reasoning → premium models
+- **REASONING** — Mathematical proofs, architectural decisions → top-tier models
 
-```bash
-bun install
+The classification happens locally through keyword matching across 14 dimensions (reasoning markers, code presence, technical terms, output formats, etc.) without any LLM call.
+
+## Current Features
+
+### Implemented
+
+- **Model routing** with tiered selection and cost estimation
+- **Multi-provider support** via Vercel AI SDK (OpenAI, Anthropic, Google, DeepSeek)
+- **Tool calling** with 6 built-in tools: read, write, edit, bash, grep, glob
+- **Session management** with message history and compaction
+- **Circuit breaker** pattern for model reliability
+- **Configuration system** via `yoru.json` with routing rules
+- **Terminal UI** using Ink (React for CLI) with streaming responses
+
+### Architecture
+
 ```
+packages/
+├── cli/           # Ink TUI + CLI entry point (yargs-based)
+├── core/          # Agent loop, session management, event streaming
+├── router/        # Complexity scorer, pricing registry, routing logic
+├── providers/     # LLM provider adapters using Vercel AI SDK
+├── tools/         # Built-in tool implementations with Zod validation
+└── sdk/           # Public API for extensions (currently empty)
+```
+
+## Technical Highlights
+
+### 14-Dimension Complexity Scorer
+
+The router uses weighted keyword matching across 14 categories:
+
+| Dimension         | Weight | Example Keywords                           |
+| ----------------- | ------ | ------------------------------------------ |
+| reasoningMarkers  | 0.18   | "prove", "theorem", "induction"            |
+| codePresence      | 0.15   | "function", "class", "```"                 |
+| multiStepPatterns | 0.12   | "first", "then", "step 1"                  |
+| technicalTerms    | 0.10   | "algorithm", "distributed", "polymorphism" |
+| agenticTask       | 0.04   | "edit", "deploy", "refactor"               |
+| outputFormat      | 0.03   | "json", "yaml", "csv"                      |
+
+This rule-based approach runs locally in milliseconds, avoiding the latency and cost of using an LLM for routing decisions.
+
+### Circuit Breaker for Model Reliability
+
+Each model has an associated circuit breaker that tracks failures. If a model fails repeatedly, the router stops selecting it until it recovers. This provides resilience against temporary provider outages or rate limits.
+
+### Tool System with Zod Validation
+
+All tools use Zod schemas for input validation:
+
+- `read_file` — Read with optional offset/limit
+- `write_file` — Write with automatic directory creation
+- `edit_file` — String replacement with uniqueness checking
+- `bash` — Shell execution with configurable timeout
+- `grep` — Pattern search with file filtering
+- `glob` — File pattern matching
+
+### Event-Driven Agent Loop
+
+The agent implements a ReAct pattern with async event streaming:
+
+- Events flow through an async generator for real-time UI updates
+- Tool calls and results are emitted as discrete events
+- Session compaction keeps only recent messages to limit context window
+
+## Development with AI Assistance
+
+This project was developed with assistance from a language model as an experiment in human-AI collaborative development. The model helped with:
+
+- Code structure and implementation patterns
+- Refactoring and debugging
+- Documentation generation
+
+**Important**: This does not mean the project was "written by AI." Human judgment remained central to architectural decisions, design choices, and quality control. The experiment aimed to understand where AI assistance accelerates development and where human expertise remains essential.
+
+The repository does not contain specific documentation about which parts were AI-assisted versus human-written, as this was not tracked during development.
+
+## Current Limitations
+
+- **No explicit permission gates** for file operations (all tool executions proceed without confirmation)
+- **Session replay/resumption** not implemented
+- **Budget enforcement** exists in schema but is minimal in practice
+- **Custom provider support** (Ollama, local models) not integrated
+- **No testing framework** for agent logic or tools
+- **SDK package** is empty — extension API not yet implemented
 
 ## Usage
 
 ```bash
-bun run dev        # Start the TUI
+# Install dependencies
+bun install
+
+# Start the TUI
+bun run dev
+
+# Type-check all packages
+bun run typecheck
+
+# Lint all packages
+bun run lint
 ```
 
-## Configuration
-
-Create `yoru.json` in your project root:
+Configure providers in `yoru.json`:
 
 ```json
 {
+  "providers": {
+    "openai": { "apiKey": "sk-..." },
+    "anthropic": { "apiKey": "sk-ant-..." },
+    "google": { "apiKey": "..." },
+    "deepseek": { "apiKey": "..." }
+  },
   "defaults": {
     "tier": "MEDIUM",
-    "model": "gemini-2.5-flash",
-    "budget": { "dailyUsd": 10.00, "perRequestUsd": 0.05 }
+    "budget": { "dailyUsd": 10, "perRequestUsd": 0.1 }
   },
-  "rules": [
-    {
-      "name": "force-premium-for-proofs",
-      "match": { "promptRegex": ["prove", "theorem"] },
-      "action": { "routeTo": "claude-opus-4.8", "maxCost": 0.25 }
-    }
-  ]
+  "rules": []
 }
 ```
 
-## Environment
+## Tech Stack
 
-Set API keys for your providers:
+| Layer    | Technology     | Rationale                                  |
+| -------- | -------------- | ------------------------------------------ |
+| Runtime  | Bun            | ESM native, fast startup, built-in bundler |
+| Language | TypeScript     | Type safety, AI SDK ecosystem              |
+| LLM SDK  | Vercel AI SDK  | Unified API for multiple providers         |
+| TUI      | Ink            | React-based terminal interfaces            |
+| Schema   | Zod            | Tool validation and type inference         |
+| Monorepo | Bun workspaces | Simple setup without Turborepo overhead    |
 
-```bash
-export OPENAI_API_KEY=sk-...
-export ANTHROPIC_API_KEY=sk-ant-...
-export GOOGLE_GENERATIVE_AI_API_KEY=...
-export DEEPSEEK_API_KEY=...
-```
+## Project Status
 
-## Architecture
+This is a **personal experiment** demonstrating:
 
-```
-packages/
-├── core/          # Agent loop, session, context management
-├── cli/           # Ink TUI + CLI entry point
-├── router/        # Cost routing engine (14-dim scorer)
-├── providers/     # LLM provider adapters
-├── tools/         # Built-in tools
-└── sdk/           # Public API for extensions
-```
+- Local complexity classification before LLM calls
+- Cost-aware model selection
+- Terminal-based AI assistant architecture
+- Circuit breaker patterns for external services
 
-## Development
-
-```bash
-bun run build      # Build all packages
-bun run lint       # Lint all packages
-bun run typecheck  # Type-check all packages
-```
+It is not production-ready and serves primarily as a learning project and architecture exploration.
 
 ## License
 
