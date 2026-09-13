@@ -37,8 +37,8 @@ const c = {
   red: "\x1b[31m",
   magenta: "\x1b[35m",
   gray: "\x1b[90m",
-  brightCyan: "\x1b[96m",
   white: "\x1b[97m",
+  brightCyan: "\x1b[96m",
 };
 
 const LOGO = `▄▄   ▄▄  ▄▄▄ ▄▄▄▄▄▄ ▄▄▄▄▄▄ ▄▄▄  ▄▄ ▄▄  ▄▄  ▄▄▄  ▄▄
@@ -88,6 +88,7 @@ let scrollback: Message[] = [];
 let totalCost = 0;
 let isRunning = false;
 let showLogo = true;
+let shownCommands = false;
 
 function renderAll() {
   const parts: string[] = [];
@@ -104,6 +105,7 @@ function renderAll() {
     ]));
     parts.push("");
     showLogo = false;
+    shownCommands = true;
   }
 
   for (const msg of scrollback) {
@@ -121,10 +123,12 @@ function renderAll() {
     parts.push("");
   }
 
-  const footerContent = [
-    `${c.bold}input:${c.reset} ${c.brightCyan}type your message...${c.reset}`,
-  ];
-  parts.push(box(footerContent, c.cyan));
+  // Footer - always visible at bottom
+  const footerLines: string[] = [];
+  footerLines.push(`${c.cyan}╭${line()}╮${c.reset}`);
+  footerLines.push(`${c.cyan}│${c.reset}  ${c.bold}›${c.reset} ${c.brightCyan}type your message...${c.reset}`);
+  footerLines.push(`${c.cyan}╰${line()}╯${c.reset}`);
+  parts.push(footerLines.join("\n"));
 
   const output = parts.join("\n");
   process.stdout.write("\x1b[2J\x1b[H");
@@ -152,11 +156,9 @@ const agent = new Agent(registry, router, config);
 function promptUser() {
   if (isRunning) return;
   renderAll();
-  // Move cursor up to input position
+  // Position cursor in the footer input area
   process.stdout.write("\x1b[5A");
-  // Create a more visible input line with bright cyan blocks
-  process.stdout.write(`\r${c.cyan}│${c.reset}  ${c.bold}input:${c.reset}  ${c.white}▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▂▃▄▅▆▇█▇▆▅▄▃▂▁${c.reset}\r`);
-  process.stdout.write(`\r${c.cyan}│${c.reset}  ${c.bold}input:${c.reset}  `);
+  process.stdout.write(`\r${c.cyan}│${c.reset}  ${c.bold}›${c.reset}  `);
 
   rl.question("", async (input) => {
     const cmd = input.trim().toLowerCase();
@@ -204,8 +206,8 @@ function promptUser() {
             break;
           case "text":
             streamingContent += event.data.text;
-            // Update inline - just overwrite the input line
-            process.stdout.write(`\r${c.cyan}│${c.reset}  ${c.bold}input:${c.reset}  ${streamingContent}`);
+            // Update inline - overwrite the input line
+            process.stdout.write(`\r${c.cyan}│${c.reset}  ${c.bold}›${c.reset}  ${streamingContent}`);
             break;
           case "tool_call":
             console.log(`\n  ${c.yellow}󱐧 ${event.data.name}${c.reset}`);
