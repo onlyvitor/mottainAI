@@ -25,6 +25,7 @@ const registry = createRegistry({
 const router = new LLMRouter(config);
 
 const W = process.stdout.columns || 80;
+const H = process.stdout.rows || 24;
 
 const c = {
   reset: "\x1b[0m",
@@ -73,80 +74,65 @@ function clear() {
   process.stdout.write("\x1b[2J\x1b[H");
 }
 
-function printHeader() {
-  console.log();
-  console.log(center(`${c.cyan}${c.bold}${LOGO}${c.reset}`));
-  console.log(center(`${c.dim}AI coding assistant with cost routing${c.reset}`));
-  console.log();
+interface Message {
+  role: "user" | "assistant" | "system";
+  content: string;
+  model?: string;
+  cost?: number;
+  tokens?: number;
 }
 
-function printHelp() {
-  console.log(box([
+let scrollback: Message[] = [];
+let totalCost = 0;
+let isRunning = false;
+
+function renderAll() {
+  const parts: string[] = [];
+
+  parts.push(center(`${c.cyan}${c.bold}${LOGO}${c.reset}`));
+  parts.push(center(`${c.dim}AI coding assistant with cost routing${c.reset}`));
+  parts.push("");
+  parts.push(box([
     `${c.bold}commands:${c.reset}`,
     `  ${c.green}/exit${c.reset}   ${c.gray}exit the application${c.reset}`,
     `  ${c.green}/clear${c.reset}  ${c.gray}clear the screen${c.reset}`,
     `  ${c.green}/cost${c.reset}   ${c.gray}show session cost${c.reset}`,
-    `  ${c.green}/help${c.reset}   ${c.gray}show this help${c.reset}`,
   ]));
-  console.log();
-}
+  parts.push("");
 
-function printRouting(model: string, tier: string, score: number) {
-  const tierColor =
-    tier === "SIMPLE" ? c.green :
-    tier === "MEDIUM" ? c.yellow :
-    tier === "COMPLEX" ? c.magenta : c.red;
-
-  console.log(box([
-    `${c.bold}routing${c.reset}`,
-    ``,
-    `  ${c.gray}model:${c.reset}  ${c.bold}${model}${c.reset}`,
-    `  ${c.gray}tier:${c.reset}   ${tierColor}${c.bold}${tier}${c.reset}  ${c.gray}(score: ${score.toFixed(3)})${c.reset}`,
-  ]));
-  console.log();
-}
-
-function printTool(name: string, status: "run" | "ok" | "fail", args?: any) {
-  if (status === "run") {
-    const argsStr = args ? JSON.stringify(args).slice(0, 40) : "";
-    const suffix = argsStr.length >= 40 ? "..." : "";
-    console.log(`  ${c.yellow}󱐧${c.reset} ${c.bold}${name}${c.reset} ${c.gray}${argsStr}${suffix}${c.reset}`);
-  } else if (status === "ok") {
-    console.log(`  ${c.green}✔${c.reset} ${c.gray}${name}${c.reset}`);
-  } else {
-    console.log(`  ${c.red}✘${c.reset} ${c.gray}${name}${c.reset}`);
+  for (const msg of scrollback) {
+    if (msg.role === "user") {
+      parts.push(`  ${c.bold}›${c.reset} ${msg.content}`);
+    } else if (msg.role === "assistant") {
+      parts.push(`  ${c.dim}[${msg.model}]${c.reset}`);
+      parts.push(`  ${msg.content}`);
+      if (msg.cost) {
+        parts.push(`  ${c.gray}cost: $${msg.cost.toFixed(6)}${c.reset}`);
+      }
+    } else if (msg.role === "system") {
+      parts.push(`  ${c.red}${msg.content}${c.reset}`);
+    }
+    parts.push("");
   }
+
+  const footerContent = [
+    `${c.bold}input:${c.reset} ${c.dim}type your message...${c.reset}`,
+  ];
+  parts.push(box(footerContent, c.cyan));
+
+  const output = parts.join("\n");
+  process.stdout.write("\x1b[2J\x1b[H");
+  process.stdout.write(output + "\n");
 }
 
-function printError(error: string) {
-  console.log(box([`${c.red}${c.bold}error:${c.reset} ${c.red}${error}${c.reset}`], c.red));
-  console.log();
-}
-
-function printDone(model: string, cost: number) {
-  console.log(box([
-    `${c.green}${c.bold}✔ done${c.reset}`,
-    ``,
-    `  ${c.gray}model:${c.reset}  ${model}`,
-    `  ${c.gray}cost:${c.reset}   ${c.bold}$${cost.toFixed(6)}${c.reset}`,
-  ]));
-  console.log();
-}
-
-function printInputBox() {
-  console.log(box([`${c.bold}input:${c.reset} ${c.dim}type your message...${c.reset}`], c.cyan));
-  process.stdout.write("\x1b[A");
-}
-
-function showPrompt() {
-  process.stdout.write(`${c.cyan}${c.bold} ▸${c.reset} `);
-}
-
-function updateInputBox(input: string) {
-  const display = input || `${c.dim}type your message...${c.reset}`;
-  const stripped = display.replace(/\x1b\[[0-9;]*m/g, "");
-  const pad = Math.max(0, W - 14 - stripped.length);
-  process.stdout.write(`\r${c.cyan}│${c.reset}  ${c.bold}input:${c.reset}  ${display}${" ".repeat(pad)}  ${c.cyan}│${c.reset}`);
+function renderIncremental(newMessages: Message[], streamingText?: string) {
+  for (const msg of newMessages) {
+    scrollback.push(msg);
+  }
+  renderAll();
+  if (streamingText) {
+    process.stdout.write(streamingText);
+  }
 }
 
 const rl = readline.createInterface({
@@ -157,92 +143,103 @@ const rl = readline.createInterface({
 
 const agent = new Agent(registry, router, config);
 
-let totalCost = 0;
-
-function prompt() {
-  // Print fresh input box
-  console.log(box([`${c.bold}input:${c.reset} ${c.dim}type your message...${c.reset}`], c.cyan));
-  process.stdout.write(`\x1b[1A`);
+function promptUser() {
+  if (isRunning) return;
+  renderAll();
+  const promptBox = `\x1b[A\x1b[A\x1b[A\x1b[A`;
+  process.stdout.write(promptBox);
   process.stdout.write(`\r${c.cyan}│${c.reset}  ${c.bold}input:${c.reset}  `);
 
   rl.question("", async (input) => {
-    // Move down past the box
-    process.stdout.write("\n");
-
     const cmd = input.trim().toLowerCase();
 
     if (cmd === "/exit" || cmd === "/quit" || cmd === "/q") {
       console.log(center(`${c.gray}bye! total cost: $${totalCost.toFixed(6)}${c.reset}`));
-      console.log();
       process.exit(0);
     }
 
     if (cmd === "/clear") {
-      clear();
-      printHeader();
-      prompt();
+      scrollback = [];
+      totalCost = 0;
+      renderAll();
+      promptUser();
       return;
     }
 
     if (cmd === "/cost") {
       console.log(box([`${c.gray}session cost:${c.reset} ${c.bold}$${totalCost.toFixed(6)}${c.reset}`]));
-      console.log();
-      prompt();
-      return;
-    }
-
-    if (cmd === "/help") {
-      printHelp();
-      prompt();
+      promptUser();
       return;
     }
 
     if (!input.trim()) {
-      prompt();
+      promptUser();
       return;
     }
 
+    const userMsg: Message = { role: "user", content: input.trim() };
+    scrollback.push(userMsg);
+    renderAll();
+
+    if (isRunning) {
+      promptUser();
+      return;
+    }
+
+    isRunning = true;
+
     let currentModel = "";
-    let currentTier = "";
-    let currentScore = 0;
+    let currentCost = 0;
+    let streamingContent = "";
 
     try {
       for await (const event of agent.run(input)) {
         switch (event.type) {
           case "routing":
             currentModel = event.data.model.displayName;
-            currentTier = event.data.tier;
-            currentScore = event.data.rawScore;
-            printRouting(currentModel, currentTier, currentScore);
+            currentCost = event.data.estimatedCost || 0;
             break;
           case "text":
-            process.stdout.write(event.data.text);
+            streamingContent += event.data.text;
+            renderAll();
+            process.stdout.write(`\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A`);
+            process.stdout.write(`\r${c.cyan}│${c.reset}  ${c.bold}input:${c.reset}  ${streamingContent}`);
             break;
           case "tool_call":
-            printTool(event.data.name, "run", event.data.args);
+            console.log(`\n  ${c.yellow}󱐧 ${event.data.name}${c.reset}`);
             break;
           case "tool_result":
-            printTool(event.data.name, event.data.result?.success ? "ok" : "fail");
             break;
           case "error":
-            printError(event.data.error);
+            console.log(`\n  ${c.red}Error: ${event.data.error}${c.reset}`);
             break;
           case "done":
-            const cost = event.data.routing?.estimatedCost || 0;
-            totalCost += cost;
-            printDone(currentModel, cost);
+            totalCost += currentCost;
             break;
         }
       }
     } catch (error) {
-      printError(error instanceof Error ? error.message : String(error));
+      const errMsg: Message = {
+        role: "system",
+        content: `Error: ${error instanceof Error ? error.message : String(error)}`,
+      };
+      scrollback.push(errMsg);
     }
 
-    prompt();
+    if (streamingContent) {
+      const assistantMsg: Message = {
+        role: "assistant",
+        content: streamingContent,
+        model: currentModel,
+        cost: currentCost,
+      };
+      scrollback.push(assistantMsg);
+    }
+
+    isRunning = false;
+    promptUser();
   });
 }
 
 clear();
-printHeader();
-printHelp();
-prompt();
+promptUser();
