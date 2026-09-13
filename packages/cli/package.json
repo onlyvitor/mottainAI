@@ -4,7 +4,7 @@
   "type": "module",
   "main": "src/index.ts",
   "bin": {
-    "yoru": "src/index.ts"
+    "mottainai": "../../bin/mottainai"
   },
   "scripts": {
     "dev": "bun src/index.ts",

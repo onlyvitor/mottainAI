@@ -1,0 +1,4 @@
+#!/bin/sh
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+exec bun "/home/vitor/Documentos/projetos/yorucode/packages/cli/src/simple.ts" "$@"
