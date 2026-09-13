@@ -11,6 +11,8 @@ export {
 export { CircuitBreaker, CircuitState } from "./circuit-breaker";
 export {
   LLMRouter,
+  RoutingConfigSchema,
+  RoutingRuleSchema,
   type RoutingDecision,
   type RoutingRequest,
   type RoutingConfig,

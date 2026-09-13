@@ -2,13 +2,32 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { z } from "zod";
 
-export interface ProviderConfig {
-  openai?: { apiKey?: string };
-  anthropic?: { apiKey?: string };
-  google?: { apiKey?: string };
-  deepseek?: { apiKey?: string };
-}
+export const ProviderConfigSchema = z.object({
+  openai: z
+    .object({
+      apiKey: z.string().optional(),
+    })
+    .optional(),
+  anthropic: z
+    .object({
+      apiKey: z.string().optional(),
+    })
+    .optional(),
+  google: z
+    .object({
+      apiKey: z.string().optional(),
+    })
+    .optional(),
+  deepseek: z
+    .object({
+      apiKey: z.string().optional(),
+    })
+    .optional(),
+});
+
+export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 
 type ModelFactory = (id: string) => any;
 

@@ -7,3 +7,4 @@ export {
   type Session,
   type Message,
 } from "./session";
+export { loadConfig, createDefaultConfig, type AppConfig } from "./config";
