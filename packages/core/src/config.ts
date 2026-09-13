@@ -1,14 +1,14 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { RoutingConfigSchema, type RoutingConfig } from "@yorucode/router";
-import { ProviderConfigSchema, type ProviderConfig } from "@yorucode/providers";
+import { RoutingConfigSchema, type RoutingConfig } from "@mottainai/router";
+import { ProviderConfigSchema, type ProviderConfig } from "@mottainai/providers";
 
 export const AppConfigSchema = RoutingConfigSchema.extend({
   providers: ProviderConfigSchema.default({}),
   systemPrompt: z
     .string()
     .default(
-      "You are YoruCode, an AI coding assistant. You have access to tools for reading, writing, and editing files, running shell commands, and searching code. Use tools to investigate and modify code as needed."
+      "You are Mottainai, an AI coding assistant. You have access to tools for reading, writing, and editing files, running shell commands, and searching code. Use tools to investigate and modify code as needed."
     ),
   maxSteps: z.number().default(20),
 });

@@ -1,5 +1,5 @@
 {
-  "name": "@yorucode/cli",
+  "name": "@mottainai/cli",
   "version": "0.1.0",
   "type": "module",
   "main": "src/index.ts",
@@ -13,10 +13,10 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@yorucode/core": "workspace:*",
-    "@yorucode/router": "workspace:*",
-    "@yorucode/providers": "workspace:*",
-    "@yorucode/tools": "workspace:*",
+    "@mottainai/core": "workspace:*",
+    "@mottainai/router": "workspace:*",
+    "@mottainai/providers": "workspace:*",
+    "@mottainai/tools": "workspace:*",
     "ink": "^5.1.0",
     "react": "^19.0.0"
   },

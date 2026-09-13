@@ -1,4 +1,4 @@
-# YoruCode — Agent Instructions
+# Mottainai — Agent Instructions
 
 ## Stack (decided, do not re-litigate)
 
@@ -14,7 +14,7 @@
 ## Architecture
 
 ```
-yorucode/
+mottainai/
 ├── packages/
 │   ├── core/          # Agent loop, session, context management
 │   ├── cli/           # Ink TUI + CLI entry point (bin)

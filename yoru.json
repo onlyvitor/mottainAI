@@ -10,6 +10,6 @@
   "blocked": [],
   "fallback": ["gemini-2.5-flash", "deepseek-v4-flash"],
   "providers": {},
-  "systemPrompt": "You are YoruCode, an AI coding assistant. You have access to tools for reading, writing, and editing files, running shell commands, and searching code. Use tools to investigate and modify code as needed.",
+  "systemPrompt": "You are Mottainai, an AI coding assistant. You have access to tools for reading, writing, and editing files, running shell commands, and searching code. Use tools to investigate and modify code as needed.",
   "maxSteps": 20
 }

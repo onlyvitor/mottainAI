@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 import React, { useState, useEffect, useCallback } from "react";
 import { render, Box, Text, useInput, useApp } from "ink";
-import { Agent, type AgentEvent } from "@yorucode/core";
-import { LLMRouter } from "@yorucode/router";
-import { createRegistry } from "@yorucode/providers";
-import { loadConfig } from "@yorucode/core";
+import { Agent, type AgentEvent } from "@mottainai/core";
+import { LLMRouter } from "@mottainai/router";
+import { createRegistry } from "@mottainai/providers";
+import { loadConfig } from "@mottainai/core";
 
 const config = loadConfig();
 
@@ -123,7 +123,7 @@ function App() {
     <Box flexDirection="column" padding={1}>
       <Box borderStyle="round" borderColor="cyan" marginBottom={1} paddingX={1}>
         <Text bold color="cyan">
-          YoruCode
+          Mottainai
         </Text>
         <Text color="gray">
           {" "}

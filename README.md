@@ -1,10 +1,10 @@
-# YoruCode
+# Mottainai
 
 AI coding harness with built-in cost routing. Routes every LLM request to the cheapest capable model, saving 40-70% on token spend.
 
 ## What it does
 
-YoruCode is a terminal-based AI coding assistant (like aider/opencode) with an integrated cost router that automatically selects the cheapest model for each task:
+Mottainai is a terminal-based AI coding assistant (like aider/opencode) with an integrated cost router that automatically selects the cheapest model for each task:
 
 - **Simple tasks** (formatting, Q&A) → DeepSeek V4 Flash ($0.14/M tokens)
 - **Medium tasks** (code generation, refactoring) → Gemini 3.1 Pro ($1.38/M)

@@ -1,6 +1,6 @@
 import { classifyComplexity, LLMRouter, calculateCost, MODEL_CATALOG } from "./packages/router/src/index.ts";
 
-console.log("=== YoruCode Router Test ===\n");
+console.log("=== Mottainai Router Test ===\n");
 
 // Test complexity scoring
 const testPrompts = [

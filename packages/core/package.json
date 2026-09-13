@@ -1,5 +1,5 @@
 {
-  "name": "@yorucode/core",
+  "name": "@mottainai/core",
   "version": "0.1.0",
   "type": "module",
   "main": "src/index.ts",
@@ -10,9 +10,9 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@yorucode/router": "workspace:*",
-    "@yorucode/tools": "workspace:*",
-    "@yorucode/providers": "workspace:*",
+    "@mottainai/router": "workspace:*",
+    "@mottainai/tools": "workspace:*",
+    "@mottainai/providers": "workspace:*",
     "ai": "^4.0.0",
     "zod": "^3.24.0"
   },

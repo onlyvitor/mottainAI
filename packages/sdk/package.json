@@ -1,5 +1,5 @@
 {
-  "name": "@yorucode/sdk",
+  "name": "@mottainai/sdk",
   "version": "0.1.0",
   "type": "module",
   "main": "src/index.ts",
@@ -10,7 +10,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@yorucode/core": "workspace:*",
+    "@mottainai/core": "workspace:*",
     "zod": "^3.24.0"
   },
   "devDependencies": {

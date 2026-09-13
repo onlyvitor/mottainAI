@@ -1,7 +1,7 @@
 import { generateText, tool, type CoreMessage } from "ai";
 import { z } from "zod";
-import { LLMRouter, type RoutingDecision } from "@yorucode/router";
-import { builtInTools, type ToolContext } from "@yorucode/tools";
+import { LLMRouter, type RoutingDecision } from "@mottainai/router";
+import { builtInTools, type ToolContext } from "@mottainai/tools";
 import {
   createSession,
   addMessage,
