@@ -37,6 +37,8 @@ const c = {
   red: "\x1b[31m",
   magenta: "\x1b[35m",
   gray: "\x1b[90m",
+  brightCyan: "\x1b[96m",
+  white: "\x1b[97m",
 };
 
 const LOGO = `▄▄   ▄▄  ▄▄▄ ▄▄▄▄▄▄ ▄▄▄▄▄▄ ▄▄▄  ▄▄ ▄▄  ▄▄  ▄▄▄  ▄▄
@@ -85,20 +87,24 @@ interface Message {
 let scrollback: Message[] = [];
 let totalCost = 0;
 let isRunning = false;
+let showLogo = true;
 
 function renderAll() {
   const parts: string[] = [];
 
-  parts.push(center(`${c.cyan}${c.bold}${LOGO}${c.reset}`));
-  parts.push(center(`${c.dim}AI coding assistant with cost routing${c.reset}`));
-  parts.push("");
-  parts.push(box([
-    `${c.bold}commands:${c.reset}`,
-    `  ${c.green}/exit${c.reset}   ${c.gray}exit the application${c.reset}`,
-    `  ${c.green}/clear${c.reset}  ${c.gray}clear the screen${c.reset}`,
-    `  ${c.green}/cost${c.reset}   ${c.gray}show session cost${c.reset}`,
-  ]));
-  parts.push("");
+  if (showLogo) {
+    parts.push(center(`${c.cyan}${c.bold}${LOGO}${c.reset}`));
+    parts.push(center(`${c.dim}AI coding assistant with cost routing${c.reset}`));
+    parts.push("");
+    parts.push(box([
+      `${c.bold}commands:${c.reset}`,
+      `  ${c.green}/exit${c.reset}   ${c.gray}exit the application${c.reset}`,
+      `  ${c.green}/clear${c.reset}  ${c.gray}clear the screen${c.reset}`,
+      `  ${c.green}/cost${c.reset}   ${c.gray}show session cost${c.reset}`,
+    ]));
+    parts.push("");
+    showLogo = false;
+  }
 
   for (const msg of scrollback) {
     if (msg.role === "user") {
@@ -116,7 +122,7 @@ function renderAll() {
   }
 
   const footerContent = [
-    `${c.bold}input:${c.reset} ${c.dim}type your message...${c.reset}`,
+    `${c.bold}input:${c.reset} ${c.brightCyan}type your message...${c.reset}`,
   ];
   parts.push(box(footerContent, c.cyan));
 
@@ -146,8 +152,10 @@ const agent = new Agent(registry, router, config);
 function promptUser() {
   if (isRunning) return;
   renderAll();
-  const promptBox = `\x1b[A\x1b[A\x1b[A\x1b[A`;
-  process.stdout.write(promptBox);
+  // Move cursor up to input position
+  process.stdout.write("\x1b[5A");
+  // Create a more visible input line with bright cyan blocks
+  process.stdout.write(`\r${c.cyan}│${c.reset}  ${c.bold}input:${c.reset}  ${c.white}▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▂▃▄▅▆▇█▇▆▅▄▃▂▁${c.reset}\r`);
   process.stdout.write(`\r${c.cyan}│${c.reset}  ${c.bold}input:${c.reset}  `);
 
   rl.question("", async (input) => {
@@ -161,6 +169,7 @@ function promptUser() {
     if (cmd === "/clear") {
       scrollback = [];
       totalCost = 0;
+      showLogo = true; // Reset logo flag
       renderAll();
       promptUser();
       return;
@@ -179,12 +188,6 @@ function promptUser() {
 
     const userMsg: Message = { role: "user", content: input.trim() };
     scrollback.push(userMsg);
-    renderAll();
-
-    if (isRunning) {
-      promptUser();
-      return;
-    }
 
     isRunning = true;
 
@@ -201,8 +204,7 @@ function promptUser() {
             break;
           case "text":
             streamingContent += event.data.text;
-            renderAll();
-            process.stdout.write(`\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A`);
+            // Update inline - just overwrite the input line
             process.stdout.write(`\r${c.cyan}│${c.reset}  ${c.bold}input:${c.reset}  ${streamingContent}`);
             break;
           case "tool_call":
