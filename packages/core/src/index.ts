@@ -8,3 +8,4 @@ export {
   type Message,
 } from "./session";
 export { loadConfig, createDefaultConfig, type AppConfig } from "./config";
+export { loadDailySpend, recordSpend, type UsageState } from "./budget";

@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { z } from "zod";
 import { RoutingConfigSchema, type RoutingConfig } from "@mottainai/router";
 import { ProviderConfigSchema, type ProviderConfig } from "@mottainai/providers";
 
@@ -14,8 +15,6 @@ export const AppConfigSchema = RoutingConfigSchema.extend({
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
-
-import { z } from "zod";
 
 export function loadConfig(configPath?: string): AppConfig {
   const paths = [

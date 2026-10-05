@@ -1,6 +1,7 @@
 import { streamText, stepCountIs, tool, type ModelMessage } from "ai";
 import { LLMRouter, calculateCost, estimateChatTokens } from "@mottainai/router";
 import { builtInTools, type ToolContext } from "@mottainai/tools";
+import { loadDailySpend, recordSpend } from "./budget";
 import {
   createSession,
   addMessage,
@@ -12,6 +13,7 @@ export interface AgentConfig {
   maxSteps?: number;
   workingDirectory?: string;
   systemPrompt?: string;
+  dailyBudgetUsd?: number;
 }
 
 export interface AgentEvent {
@@ -81,6 +83,29 @@ export class Agent {
   async *run(
     userMessage: string
   ): AsyncGenerator<AgentEvent, void, unknown> {
+    const dailyBudget = this.config.dailyBudgetUsd;
+    if (dailyBudget && dailyBudget > 0) {
+      const spent = loadDailySpend();
+      if (spent >= dailyBudget) {
+        yield {
+          type: "error",
+          data: {
+            error: `Daily budget exhausted: $${spent.toFixed(4)} spent of $${dailyBudget.toFixed(2)} limit. Increase defaults.budget.dailyUsd in yoru.json or wait until tomorrow.`,
+          },
+        };
+        yield {
+          type: "done",
+          data: {
+            session: this.session,
+            routing: null,
+            usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
+            budget: { dailySpentUsd: spent, dailyBudgetUsd: dailyBudget },
+          },
+        };
+        return;
+      }
+    }
+
     addMessage(this.session, { role: "user", content: userMessage });
     this.history.push({ role: "user", content: userMessage });
     this.trimHistory();
@@ -207,12 +232,15 @@ export class Agent {
 
     compactSession(this.session);
 
+    const dailySpentUsd = recordSpend(costUsd);
+
     yield {
       type: "done",
       data: {
         session: this.session,
         routing,
         usage: { inputTokens, outputTokens, costUsd },
+        budget: { dailySpentUsd, dailyBudgetUsd: dailyBudget ?? 0 },
       },
     };
   }

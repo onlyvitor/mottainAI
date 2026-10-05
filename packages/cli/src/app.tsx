@@ -73,7 +73,10 @@ function createRuntime() {
   });
 
   const router = new LLMRouter(config);
-  const agent = new Agent(registry, router, config);
+  const agent = new Agent(registry, router, {
+    ...config,
+    dailyBudgetUsd: config.defaults.budget.dailyUsd,
+  });
 
   return { agent, config };
 }
