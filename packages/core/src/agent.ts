@@ -5,7 +5,6 @@ import {
   estimateChatTokens,
   getModel as getCatalogModel,
   type ModelPricing,
-  type RoutingDecision,
 } from "@mottainai/router";
 import { builtInTools, type ToolContext } from "@mottainai/tools";
 import { loadDailySpend, recordSpend } from "./budget";
@@ -25,6 +24,7 @@ export interface AgentConfig {
   workingDirectory?: string;
   systemPrompt?: string;
   dailyBudgetUsd?: number;
+  modelOverride?: string;
   permissions?: PermissionsConfig;
   requestPermission?: (
     toolName: string,
@@ -99,11 +99,21 @@ export class Agent {
     }
   }
 
-  private buildAttempts(routing: RoutingDecision): ModelPricing[] {
-    const attempts: ModelPricing[] = [routing.model];
-    const seen = new Set([routing.model.id]);
+  private resolveModelOverride(id: string): ModelPricing | undefined {
+    const bare = id.includes("/")
+      ? id
+          .split("/")
+          .slice(1)
+          .join("/")
+      : id;
+    return getCatalogModel(bare);
+  }
 
-    for (const id of routing.fallback) {
+  private buildAttempts(primary: ModelPricing, fallbackIds: string[]): ModelPricing[] {
+    const attempts: ModelPricing[] = [primary];
+    const seen = new Set([primary.id]);
+
+    for (const id of fallbackIds) {
       if (seen.has(id)) continue;
       const model = getCatalogModel(id);
       if (!model) continue;
@@ -190,7 +200,25 @@ export class Agent {
       needsTools: true,
     });
 
-    yield { type: "routing", data: routing };
+    let primaryModel = routing.model;
+    if (this.config.modelOverride) {
+      const override = this.resolveModelOverride(this.config.modelOverride);
+      if (override) {
+        primaryModel = override;
+      }
+    }
+
+    yield {
+      type: "routing",
+      data: {
+        ...routing,
+        model: primaryModel,
+        reason:
+          primaryModel.id !== routing.model.id
+            ? `Model override: ${primaryModel.id}`
+            : routing.reason,
+      },
+    };
 
     const toolCtx: ToolContext = {
       workingDirectory: this.config.workingDirectory!,
@@ -240,7 +268,7 @@ export class Agent {
       });
     }
 
-    const attempts = this.buildAttempts(routing);
+    const attempts = this.buildAttempts(primaryModel, routing.fallback);
 
     let succeeded = false;
     let aborted = false;

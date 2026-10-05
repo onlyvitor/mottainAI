@@ -12,25 +12,8 @@ import { loadConfig } from "@mottainai/core";
 export interface RunCommandArgs {
   prompt?: string;
   model?: string;
-  agent?: string;
-  continue?: boolean;
-  session?: string;
-  fork?: boolean;
-  mini?: boolean;
   yolo?: boolean;
   auto?: boolean;
-  replay?: boolean;
-  replayLimit?: number;
-  demo?: boolean;
-  "no-replay"?: boolean;
-  "replay-limit"?: number;
-  attach?: string;
-  port?: number;
-  hostname?: string;
-  mdns?: boolean;
-  "no-mdns"?: boolean;
-  "mdns-domain"?: string;
-  cors?: boolean;
   help?: boolean;
   version?: boolean;
 }
@@ -57,7 +40,7 @@ interface SessionStats {
 }
 
 let permissionBridge: ((req: PermissionRequestState) => void) | null = null;
-const cliFlags = { auto: false };
+const cliFlags = { auto: false, model: undefined as string | undefined };
 
 function truncate(text: string, max: number): string {
   const oneLine = text.replace(/\s+/g, " ").trim();
@@ -95,6 +78,7 @@ function createRuntime() {
   const agent = new Agent(registry, router, {
     ...config,
     dailyBudgetUsd: config.defaults.budget.dailyUsd,
+    modelOverride: cliFlags.model,
     requestPermission: cliFlags.auto
       ? async () => true
       : (toolName, input) =>
@@ -536,26 +520,8 @@ export const RunCommand: CommandModule<{}, RunCommandArgs> = {
       .option("model", {
         type: "string",
         alias: ["m"],
-        describe: "model to use in the format of provider/model",
-      })
-      .option("agent", {
-        type: "string",
-        describe: "agent to use",
-      })
-      .option("continue", {
-        alias: ["c"],
-        describe: "continue the last session",
-        type: "boolean",
-      })
-      .option("session", {
-        alias: ["s"],
-        type: "string",
-        describe: "session id to continue",
-      })
-      .option("fork", {
-        type: "boolean",
         describe:
-          "fork the session when continuing (use with --continue or --session)",
+          "force a model from the catalog (e.g. gemini-2.5-flash or google/gemini-2.5-flash)",
       })
       .option("auto", {
         type: "boolean",
@@ -567,36 +533,10 @@ export const RunCommand: CommandModule<{}, RunCommandArgs> = {
         type: "boolean",
         hidden: true,
         default: false,
-      })
-      .option("mini", {
-        type: "boolean",
-        describe: "start the minimal interactive interface",
-        default: false,
-      })
-      .option("replay", {
-        type: "boolean",
-        hidden: true,
-      })
-      .option("no-replay", {
-        type: "boolean",
-        describe: "disable mini session history replay on resize",
-      })
-      .option("replay-limit", {
-        type: "number",
-        describe: "cap visible mini replay to the newest N messages",
-      })
-      .option("demo", {
-        type: "boolean",
-        hidden: true,
       }),
   async handler(args) {
-    if (args.mini) {
-      console.log("Mini mode is not supported in this build");
-      process.exitCode = 1;
-      return;
-    }
-
     cliFlags.auto = Boolean(args.auto || args.yolo);
+    cliFlags.model = args.model;
 
     render(React.createElement(App));
   },
