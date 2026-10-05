@@ -10,6 +10,10 @@ import {
 import { builtInTools, type ToolContext } from "@mottainai/tools";
 import { loadDailySpend, recordSpend } from "./budget";
 import {
+  resolvePermission,
+  type PermissionsConfig,
+} from "./permissions";
+import {
   createSession,
   addMessage,
   compactSession,
@@ -21,6 +25,11 @@ export interface AgentConfig {
   workingDirectory?: string;
   systemPrompt?: string;
   dailyBudgetUsd?: number;
+  permissions?: PermissionsConfig;
+  requestPermission?: (
+    toolName: string,
+    input: unknown
+  ) => Promise<boolean>;
 }
 
 export interface AgentEvent {
@@ -188,6 +197,7 @@ export class Agent {
       sessionId: this.session.id,
       spawnSubagent:
         this.depth < 1 ? (prompt) => this.runSubagent(prompt) : undefined,
+      requestPermission: this.config.requestPermission,
     };
 
     const tools: Record<string, any> = {};
@@ -196,6 +206,35 @@ export class Agent {
         description: t.description,
         inputSchema: t.inputSchema,
         execute: async (input: any) => {
+          const mode = resolvePermission(t.name, this.config.permissions);
+
+          if (mode === "deny") {
+            return {
+              success: false,
+              output: "",
+              error: `Tool "${t.name}" is denied by permissions config`,
+            };
+          }
+
+          if (mode === "ask") {
+            const request = this.config.requestPermission;
+            if (!request) {
+              return {
+                success: false,
+                output: "",
+                error: `Tool "${t.name}" requires permission but no prompt is available`,
+              };
+            }
+            const allowed = await request(t.name, input);
+            if (!allowed) {
+              return {
+                success: false,
+                output: "",
+                error: `User denied permission for "${t.name}"`,
+              };
+            }
+          }
+
           return await t.execute(input, toolCtx);
         },
       });

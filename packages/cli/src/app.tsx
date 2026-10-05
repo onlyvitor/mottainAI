@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { render, Box, Text, useInput, useApp } from "ink";
 import type { CommandModule } from "yargs";
 import { Agent, type AgentEvent } from "@mottainai/core";
@@ -45,6 +45,15 @@ interface EventLog {
   data: any;
 }
 
+interface PermissionRequestState {
+  toolName: string;
+  input: unknown;
+  resolve: (allowed: boolean) => void;
+}
+
+let permissionBridge: ((req: PermissionRequestState) => void) | null = null;
+const cliFlags = { auto: false };
+
 let runtime: ReturnType<typeof createRuntime> | null = null;
 
 function getRuntime() {
@@ -76,6 +85,16 @@ function createRuntime() {
   const agent = new Agent(registry, router, {
     ...config,
     dailyBudgetUsd: config.defaults.budget.dailyUsd,
+    requestPermission: cliFlags.auto
+      ? async () => true
+      : (toolName, input) =>
+          new Promise<boolean>((resolve) => {
+            if (permissionBridge) {
+              permissionBridge({ toolName, input, resolve });
+            } else {
+              resolve(false);
+            }
+          }),
   });
 
   return { agent, config };
@@ -87,9 +106,18 @@ function App() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [eventLog, setEventLog] = useState<EventLog[]>([]);
   const [currentText, setCurrentText] = useState("");
+  const [permissionRequest, setPermissionRequest] =
+    useState<PermissionRequestState | null>(null);
   const { exit } = useApp();
 
   const { agent } = getRuntime();
+
+  useEffect(() => {
+    permissionBridge = (req) => setPermissionRequest(req);
+    return () => {
+      permissionBridge = null;
+    };
+  }, []);
 
   const handleSubmit = useCallback(
     async (prompt: string) => {
@@ -157,6 +185,17 @@ function App() {
   useInput((char, key) => {
     if (key.ctrl && char === "c") {
       exit();
+      return;
+    }
+
+    if (permissionRequest) {
+      if (char === "y" || char === "Y") {
+        permissionRequest.resolve(true);
+        setPermissionRequest(null);
+      } else if (char === "n" || char === "N" || key.escape) {
+        permissionRequest.resolve(false);
+        setPermissionRequest(null);
+      }
       return;
     }
 
@@ -245,6 +284,24 @@ return (
           </Box>
         )}
       </Box>
+
+      {permissionRequest && (
+        <Box
+          borderStyle="round"
+          borderColor="yellow"
+          paddingX={1}
+          flexDirection="column"
+          marginBottom={1}
+        >
+          <Text bold color="yellow">
+            Allow {permissionRequest.toolName}?
+          </Text>
+          <Text color="gray" wrap="truncate-end">
+            {JSON.stringify(permissionRequest.input).slice(0, 200)}
+          </Text>
+          <Text color="white">[y] allow / [n] deny</Text>
+        </Box>
+      )}
 
       <Box borderStyle="round" borderColor="gray" paddingX={1}>
         <Text color="green">{"> "}</Text>
@@ -335,11 +392,7 @@ export const RunCommand: CommandModule<{}, RunCommandArgs> = {
       return;
     }
 
-    if (args.yolo || args.auto) {
-      console.log("Auto-approve permissions are not supported in this build");
-      process.exitCode = 1;
-      return;
-    }
+    cliFlags.auto = Boolean(args.auto || args.yolo);
 
     render(React.createElement(App));
   },

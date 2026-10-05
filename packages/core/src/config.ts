@@ -6,6 +6,14 @@ import { ProviderConfigSchema, type ProviderConfig } from "@mottainai/providers"
 
 export const AppConfigSchema = RoutingConfigSchema.extend({
   providers: ProviderConfigSchema.default({}),
+  permissions: z
+    .object({
+      default: z.enum(["allow", "deny", "ask"]).default("ask"),
+      tools: z
+        .record(z.string(), z.enum(["allow", "deny", "ask"]))
+        .default({}),
+    })
+    .default({}),
   systemPrompt: z
     .string()
     .default(

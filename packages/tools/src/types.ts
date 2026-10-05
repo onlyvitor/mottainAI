@@ -4,6 +4,10 @@ export interface ToolContext {
   workingDirectory: string;
   sessionId: string;
   spawnSubagent?: (prompt: string) => Promise<string>;
+  requestPermission?: (
+    toolName: string,
+    input: unknown
+  ) => Promise<boolean>;
 }
 
 export interface ToolResult {

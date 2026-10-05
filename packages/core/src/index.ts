@@ -9,3 +9,9 @@ export {
 } from "./session";
 export { loadConfig, createDefaultConfig, type AppConfig } from "./config";
 export { loadDailySpend, recordSpend, type UsageState } from "./budget";
+export {
+  resolvePermission,
+  DEFAULT_TOOL_PERMISSIONS,
+  type PermissionMode,
+  type PermissionsConfig,
+} from "./permissions";
