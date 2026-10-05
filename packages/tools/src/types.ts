@@ -3,6 +3,7 @@ import { z } from "zod";
 export interface ToolContext {
   workingDirectory: string;
   sessionId: string;
+  spawnSubagent?: (prompt: string) => Promise<string>;
 }
 
 export interface ToolResult {

@@ -57,11 +57,13 @@ export class Agent {
   private providers: any;
   private history: ModelMessage[] = [];
   private abortController: AbortController | null = null;
+  private depth: number;
 
   constructor(
     providers: any,
     router?: LLMRouter,
-    config?: AgentConfig
+    config?: AgentConfig,
+    depth: number = 0
   ) {
     this.providers = providers;
     this.router = router || new LLMRouter();
@@ -71,6 +73,7 @@ export class Agent {
       ...config,
     };
     this.session = createSession();
+    this.depth = depth;
   }
 
   abort(): void {
@@ -101,6 +104,46 @@ export class Agent {
     }
 
     return attempts;
+  }
+
+  private async runSubagent(prompt: string): Promise<string> {
+    const sub = new Agent(
+      this.providers,
+      this.router,
+      {
+        maxSteps: Math.min(this.config.maxSteps ?? 20, 10),
+        workingDirectory: this.config.workingDirectory,
+        systemPrompt:
+          "You are a subagent completing a delegated task. Work autonomously, use tools as needed, and end with a single final message summarizing the result. Do not ask questions.",
+        dailyBudgetUsd: this.config.dailyBudgetUsd,
+      },
+      this.depth + 1
+    );
+
+    let stepText = "";
+    let finalText = "";
+    let lastError = "";
+
+    for await (const event of sub.run(prompt)) {
+      switch (event.type) {
+        case "thinking":
+          stepText = "";
+          break;
+        case "text":
+          stepText += event.data.text;
+          finalText = stepText;
+          break;
+        case "error":
+          lastError = event.data.error;
+          break;
+      }
+    }
+
+    if (!finalText && lastError) {
+      throw new Error(lastError);
+    }
+
+    return finalText;
   }
 
   async *run(
@@ -143,6 +186,8 @@ export class Agent {
     const toolCtx: ToolContext = {
       workingDirectory: this.config.workingDirectory!,
       sessionId: this.session.id,
+      spawnSubagent:
+        this.depth < 1 ? (prompt) => this.runSubagent(prompt) : undefined,
     };
 
     const tools: Record<string, any> = {};

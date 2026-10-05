@@ -6,6 +6,7 @@ export { bashTool } from "./bash";
 export { grepTool } from "./grep";
 export { globTool } from "./glob";
 export { webfetchTool } from "./webfetch";
+export { taskTool } from "./task";
 
 import { readFileTool } from "./read-file";
 import { writeFileTool } from "./write-file";
@@ -14,6 +15,7 @@ import { bashTool } from "./bash";
 import { grepTool } from "./grep";
 import { globTool } from "./glob";
 import { webfetchTool } from "./webfetch";
+import { taskTool } from "./task";
 import type { ToolDefinition } from "./types";
 
 export const builtInTools: ToolDefinition[] = [
@@ -24,4 +26,5 @@ export const builtInTools: ToolDefinition[] = [
   grepTool,
   globTool,
   webfetchTool,
+  taskTool,
 ];
