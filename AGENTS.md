@@ -20,7 +20,7 @@ mottainai/
 │   ├── cli/           # Ink TUI + CLI entry point (bin)
 │   ├── router/        # Cost routing engine (14-dim scorer)
 │   ├── providers/     # LLM provider adapters
-│   ├── tools/         # Built-in tools (read, write, edit, bash, grep, glob)
+│   ├── tools/         # Built-in tools (read, write, edit, bash, grep, glob, webfetch, task)
 │   └── sdk/           # Public API for extensions
 ├── yoru.json          # User config: routing rules, budget, model prefs
 └── package.json       # Workspace root
@@ -31,8 +31,8 @@ mottainai/
 The router is the core differentiator. Three-layer decision:
 
 1. **Complexity Classifier** — 14-dimension keyword scoring (ClawRouter-style), <1ms, no LLM call
-2. **Cost Selection** — Pick cheapest capable model within tier, respecting budget
-3. **Cascade Fallback** — Cheap first → verify quality → escalate if rejected
+2. **Cost Selection** — Pick cheapest capable model within tier, filtered by `perRequestUsd`
+3. **Cascade Fallback** — on runtime failure, retry the `fallback` list; per-model circuit breakers record outcomes
 
 Model tiers:
 - **SIMPLE** (60% traffic): DeepSeek V4 Flash ($0.14/M), Gemini 2.5 Flash ($0.30/M)
@@ -46,8 +46,9 @@ User config in `yoru.json` — rules override auto-routing (priority-ordered, fi
 ReAct loop via Vercel AI SDK:
 - **Macro loop**: conversation steps, context compaction, subagent spawning
 - **Micro loop**: `streamText()` → tool calls → execute → result → repeat
-- **Stop conditions**: `isStepCount(20)`, `hasToolCall('done')`, user abort
-- **Permissions**: per-tool allow/deny/ask gates
+- **Stop conditions**: `stopWhen: stepCountIs(maxSteps)` (default 20), no more tool calls, user abort (Ctrl+C)
+- **Permissions**: per-tool allow/deny/ask gates resolved from `yoru.json` `permissions` with sane defaults (read/grep/glob=allow, write/edit/bash/webfetch/task=ask)
+- **Budget**: per-request filter in selection + daily spend persisted at `~/.mottainai/usage.json`, hard stop at `dailyUsd`
 
 Tools: `read`, `write`, `edit`, `bash`, `grep`, `glob`, `webfetch`, `task` (subagent)
 
@@ -66,6 +67,6 @@ bun run typecheck  # Type-check all packages
 - ESM only (`"type": "module"`)
 - No comments in code unless requested
 - Zod schemas for all tool inputs and structured outputs
-- Tool files paired with `.txt` description files (system prompts for LLM)
-- Permission rules defined per-agent in config
+- Tool descriptions are inline strings in each tool's Zod-based `createTool` definition
+- Permission modes live in `yoru.json` under `permissions` (per-tool overrides + default)
 - Pricing registry must be kept current (update when providers change prices)

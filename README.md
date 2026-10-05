@@ -26,12 +26,15 @@ The classification happens locally through keyword matching across 14 dimensions
 ### Implemented
 
 - **Model routing** with tiered selection and cost estimation
-- **Multi-provider support** via Vercel AI SDK (OpenAI, Anthropic, Google, DeepSeek)
-- **Tool calling** with 6 built-in tools: read, write, edit, bash, grep, glob
-- **Session management** with message history and compaction
-- **Circuit breaker** pattern for model reliability
-- **Configuration system** via `yoru.json` with routing rules
-- **Terminal UI** using Ink (React for CLI) with streaming responses
+- **Multi-provider support** via Vercel AI SDK v5 (OpenAI, Anthropic, Google, DeepSeek)
+- **Tool calling** with 8 built-in tools: read, write, edit, bash, grep, glob, webfetch, task (subagent)
+- **Permission gates** (allow/deny/ask per tool) with interactive y/n prompt in the TUI; `--auto`/`--yolo` to skip prompts
+- **Budget enforcement**: per-request cost filter in model selection + daily spend tracking (persisted to `~/.mottainai/usage.json`) with hard stop at `dailyUsd`
+- **Cascade fallback**: on provider failure the agent retries with the fallback model list, and per-model circuit breakers track failures/successes
+- **Streaming agent loop** via `streamText` — token deltas, tool calls and results flow as events to the TUI
+- **Session management** with message history and context trimming
+- **Configuration system** via `yoru.json` with routing rules and per-tool permissions
+- **Terminal UI** using Ink: token streaming, visible routing/tool activity, prompt history (↑/↓), spinner, session cost/tokens status bar, slash commands (`/help`, `/clear`, `/exit`), Ctrl+C cancels a running step, `--model` override
 
 ### Architecture
 
@@ -62,9 +65,14 @@ The router uses weighted keyword matching across 14 categories:
 
 This rule-based approach runs locally in milliseconds, avoiding the latency and cost of using an LLM for routing decisions.
 
-### Circuit Breaker for Model Reliability
+### Circuit Breaker + Cascade Fallback
 
-Each model has an associated circuit breaker that tracks failures. If a model fails repeatedly, the router stops selecting it until it recovers. This provides resilience against temporary provider outages or rate limits.
+Each model has an associated circuit breaker that records real call outcomes. If a model fails repeatedly, the router stops selecting it until it recovers. When a call fails at runtime, the agent cascades through the configured fallback model list (skipping providers without API keys and models with open circuits) and reports each retry as a routing event.
+
+### Budget Enforcement
+
+- **Per request** — candidate models whose estimated cost exceeds `defaults.budget.perRequestUsd` are filtered out during selection (cheapest capable wins among the affordable ones).
+- **Per day** — real token usage after each run is converted to cost and accumulated in `~/.mottainai/usage.json` (resets daily). Once `defaults.budget.dailyUsd` is reached, new runs are rejected with a clear error.
 
 ### Tool System with Zod Validation
 
@@ -75,15 +83,17 @@ All tools use Zod schemas for input validation:
 - `edit_file` — String replacement with uniqueness checking
 - `bash` — Shell execution with configurable timeout
 - `grep` — Pattern search with file filtering
-- `glob` — File pattern matching
+- `glob` — File pattern matching (find-based; `**` semantics are limited for deep globs)
+- `webfetch` — Fetch a URL as markdown, text or raw HTML
+- `task` — Delegate a self-contained subtask to a subagent (same tools, isolated session, depth-limited)
 
 ### Event-Driven Agent Loop
 
 The agent implements a ReAct pattern with async event streaming:
 
-- Events flow through an async generator for real-time UI updates
-- Tool calls and results are emitted as discrete events
-- Session compaction keeps only recent messages to limit context window
+- Events flow through an async generator (`routing`, `thinking`, `text` deltas, `tool_call`, `tool_result`, `error`, `done`) for real-time UI updates
+- Tool calls execute, results feed back into the conversation, and the loop continues until the model stops calling tools or `maxSteps` is reached
+- LLM history is trimmed at user-message boundaries to stay within the context budget; the display session is compacted separately
 
 ## Development with AI Assistance
 
@@ -99,12 +109,11 @@ The repository does not contain specific documentation about which parts were AI
 
 ## Current Limitations
 
-- **No explicit permission gates** for file operations (all tool executions proceed without confirmation)
-- **Session replay/resumption** not implemented
-- **Budget enforcement** exists in schema but is minimal in practice
+- **Session replay/resumption** not implemented (history is in-memory; only the daily budget state is persisted)
 - **Custom provider support** (Ollama, local models) not integrated
 - **No testing framework** for agent logic or tools
 - **SDK package** is empty — extension API not yet implemented
+- **Pricing registry** is a static catalog — verify model IDs and prices against your providers' current API
 
 ## Usage
 
@@ -115,12 +124,20 @@ bun install
 # Start the TUI
 bun run dev
 
+# Force a specific catalog model
+bun run dev -- -m claude-sonnet-5
+
+# Auto-approve tool permissions (dangerous!)
+bun run dev -- --auto
+
 # Type-check all packages
 bun run typecheck
 
 # Lint all packages
 bun run lint
 ```
+
+In the TUI: `↑`/`↓` recalls prompt history, `/help` `/clear` `/exit` are slash commands, Ctrl+C cancels a running step (or quits when idle), and permission prompts answer with `y`/`n`.
 
 Configure providers in `yoru.json`:
 
@@ -136,9 +153,15 @@ Configure providers in `yoru.json`:
     "tier": "MEDIUM",
     "budget": { "dailyUsd": 10, "perRequestUsd": 0.1 }
   },
+  "permissions": {
+    "default": "ask",
+    "tools": { "read_file": "allow", "bash": "ask" }
+  },
   "rules": []
 }
 ```
+
+Permission modes: `allow` runs without prompt, `deny` blocks the tool, `ask` prompts in the TUI. Defaults: read/grep/glob are `allow`; write/edit/bash/webfetch/task are `ask`.
 
 ## Tech Stack
 
