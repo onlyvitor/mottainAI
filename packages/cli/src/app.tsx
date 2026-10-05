@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { render, Box, Text, useInput, useApp } from "ink";
 import type { CommandModule } from "yargs";
-import { Agent, type AgentEvent } from "@mottainai/core";
+import { Agent } from "@mottainai/core";
 import { LLMRouter } from "@mottainai/router";
 import { createRegistry } from "@mottainai/providers";
 import { loadConfig } from "@mottainai/core";
@@ -33,17 +33,11 @@ export interface RunCommandArgs {
   version?: boolean;
 }
 
-interface ChatMessage {
-  role: "user" | "assistant" | "system";
-  content: string;
-  model?: string;
-  cost?: number;
-}
-
-interface EventLog {
-  type: string;
-  data: any;
-}
+type TranscriptItem =
+  | { kind: "user"; text: string }
+  | { kind: "assistant"; text: string; model?: string; cost?: number }
+  | { kind: "error"; text: string }
+  | { kind: "activity"; text: string };
 
 interface PermissionRequestState {
   toolName: string;
@@ -53,6 +47,11 @@ interface PermissionRequestState {
 
 let permissionBridge: ((req: PermissionRequestState) => void) | null = null;
 const cliFlags = { auto: false };
+
+function truncate(text: string, max: number): string {
+  const oneLine = text.replace(/\s+/g, " ").trim();
+  return oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine;
+}
 
 let runtime: ReturnType<typeof createRuntime> | null = null;
 
@@ -101,10 +100,9 @@ function createRuntime() {
 }
 
 function App() {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [items, setItems] = useState<TranscriptItem[]>([]);
   const [input, setInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
-  const [eventLog, setEventLog] = useState<EventLog[]>([]);
   const [currentText, setCurrentText] = useState("");
   const [permissionRequest, setPermissionRequest] =
     useState<PermissionRequestState | null>(null);
@@ -123,55 +121,90 @@ function App() {
     async (prompt: string) => {
       if (!prompt.trim() || isProcessing) return;
 
-      setMessages((prev) => [...prev, { role: "user", content: prompt }]);
+      setItems((prev) => [...prev, { kind: "user", text: prompt }]);
       setInput("");
-      setEventLog([]);
       setIsProcessing(true);
       setCurrentText("");
 
+      let accumulated = "";
+
       try {
         for await (const event of agent.run(prompt)) {
-          setEventLog((prev) => [...prev, event]);
-
           switch (event.type) {
-            case "routing":
-              break;
-            case "text":
-              setCurrentText((prev) => prev + event.data.text);
-              break;
-            case "tool_call":
-              break;
-            case "tool_result":
-              break;
-            case "error":
-              setMessages((prev) => [
-                ...prev,
-                {
-                  role: "system",
-                  content: `Error: ${event.data.error}`,
-                },
-              ]);
-              break;
-            case "done":
-              if (currentText) {
-                setMessages((prev) => [
-                  ...prev.slice(0, -1),
+            case "routing": {
+              const d = event.data;
+              if (accumulated) {
+                accumulated = "";
+                setCurrentText("");
+              }
+              if (d?.model) {
+                setItems((prev) => [
+                  ...prev,
                   {
-                    role: "assistant",
-                    content: currentText,
-                    model: event.data.routing?.model?.id,
+                    kind: "activity",
+                    text: `→ ${d.model.displayName ?? d.model.id} · ${d.tier} · ~$${Number(d.estimatedCost ?? 0).toFixed(4)}`,
                   },
                 ]);
               }
               break;
+            }
+            case "text":
+              accumulated += event.data.text;
+              setCurrentText(accumulated);
+              break;
+            case "tool_call":
+              setItems((prev) => [
+                ...prev,
+                {
+                  kind: "activity",
+                  text: `⚙ ${event.data.name} ${truncate(JSON.stringify(event.data.args ?? {}), 60)}`,
+                },
+              ]);
+              break;
+            case "tool_result": {
+              const r = event.data.result;
+              const ok = r?.success !== false;
+              const detail = ok
+                ? truncate(String(r?.output ?? ""), 60)
+                : truncate(String(r?.error ?? ""), 60);
+              setItems((prev) => [
+                ...prev,
+                {
+                  kind: "activity",
+                  text: `${ok ? "✓" : "✗"} ${event.data.name} ${detail}`,
+                },
+              ]);
+              break;
+            }
+            case "error":
+              setItems((prev) => [
+                ...prev,
+                { kind: "error", text: String(event.data.error) },
+              ]);
+              break;
+            case "done": {
+              const d = event.data;
+              if (accumulated.trim()) {
+                setItems((prev) => [
+                  ...prev,
+                  {
+                    kind: "assistant",
+                    text: accumulated,
+                    model: d?.routing?.model?.id,
+                    cost: d?.usage?.costUsd,
+                  },
+                ]);
+              }
+              break;
+            }
           }
         }
       } catch (error) {
-        setMessages((prev) => [
+        setItems((prev) => [
           ...prev,
           {
-            role: "system",
-            content: `Error: ${error instanceof Error ? error.message : String(error)}`,
+            kind: "error",
+            text: error instanceof Error ? error.message : String(error),
           },
         ]);
       } finally {
@@ -179,7 +212,7 @@ function App() {
         setCurrentText("");
       }
     },
-    [agent, isProcessing, currentText],
+    [agent, isProcessing],
   );
 
   useInput((char, key) => {
@@ -217,7 +250,7 @@ function App() {
     }
   });
 
-return (
+  return (
     <Box flexDirection="column" padding={1}>
       <Box
         borderStyle="round"
@@ -247,27 +280,57 @@ return (
       </Box>
 
       <Box flexDirection="column" marginBottom={1}>
-        {messages.map((msg, i) => (
-          <Box key={i} marginBottom={1}>
-            <Text
-              bold
-              color={
-                msg.role === "user"
-                  ? "green"
-                  : msg.role === "assistant"
-                    ? "blue"
-                    : "red"
-              }
-            >
-              {msg.role === "user"
-                ? "You: "
-                : msg.role === "assistant"
-                  ? "AI: "
-                  : "Err: "}
-            </Text>
-            <Text wrap="wrap">{msg.content}</Text>
-          </Box>
-        ))}
+        {items.map((item, i) => {
+          switch (item.kind) {
+            case "user":
+              return (
+                <Box key={i} marginBottom={1}>
+                  <Text bold color="green">
+                    You:{" "}
+                  </Text>
+                  <Text wrap="wrap">{item.text}</Text>
+                </Box>
+              );
+            case "assistant":
+              return (
+                <Box key={i} marginBottom={1} flexDirection="column">
+                  <Box>
+                    <Text bold color="blue">
+                      AI:{" "}
+                    </Text>
+                    <Text wrap="wrap">{item.text}</Text>
+                  </Box>
+                  {(item.model || item.cost != null) && (
+                    <Text dimColor color="gray">
+                      {"    "}
+                      {item.model ?? ""}
+                      {item.cost != null ? ` · $${item.cost.toFixed(4)}` : ""}
+                    </Text>
+                  )}
+                </Box>
+              );
+            case "error":
+              return (
+                <Box key={i} marginBottom={1}>
+                  <Text bold color="red">
+                    Err:{" "}
+                  </Text>
+                  <Text color="red" wrap="wrap">
+                    {item.text}
+                  </Text>
+                </Box>
+              );
+            case "activity":
+              return (
+                <Box key={i}>
+                  <Text dimColor color="gray" wrap="truncate-end">
+                    {"  "}
+                    {item.text}
+                  </Text>
+                </Box>
+              );
+          }
+        })}
 
         {isProcessing && currentText && (
           <Box marginBottom={1}>
@@ -297,7 +360,7 @@ return (
             Allow {permissionRequest.toolName}?
           </Text>
           <Text color="gray" wrap="truncate-end">
-            {JSON.stringify(permissionRequest.input).slice(0, 200)}
+            {truncate(JSON.stringify(permissionRequest.input), 200)}
           </Text>
           <Text color="white">[y] allow / [n] deny</Text>
         </Box>
@@ -375,7 +438,7 @@ export const RunCommand: CommandModule<{}, RunCommandArgs> = {
       .option("no-replay", {
         type: "boolean",
         describe:
-          "disable mini session history replay on resume and after resize",
+          "disable mini session history replay on resize",
       })
       .option("replay-limit", {
         type: "number",
