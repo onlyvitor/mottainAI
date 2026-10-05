@@ -92,7 +92,10 @@ export class Agent {
 
     yield { type: "routing", data: routing };
 
-    const model = this.providers.getModel(routing.model.id);
+    const model = this.providers.getModel(
+      routing.model.id,
+      routing.model.provider
+    );
 
     const toolCtx: ToolContext = {
       workingDirectory: this.config.workingDirectory!,

@@ -32,7 +32,8 @@ export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 type ModelFactory = (id: string) => any;
 
 export interface ProviderRegistry {
-  getModel(id: string): any;
+  getModel(id: string, provider?: string): any;
+  hasProvider(provider: string): boolean;
 }
 
 export function createRegistry(config?: ProviderConfig): ProviderRegistry {
@@ -63,11 +64,15 @@ export function createRegistry(config?: ProviderConfig): ProviderRegistry {
   }
 
   return {
-    getModel(modelId: string): any {
-      const [provider, ...rest] = modelId.split("/");
+    getModel(modelId: string, provider?: string): any {
+      if (provider && factories[provider]) {
+        return factories[provider]!(modelId);
+      }
+
+      const [prefix, ...rest] = modelId.split("/");
       const id = rest.join("/") || modelId;
 
-      const factory = factories[provider || ""];
+      const factory = factories[prefix || ""];
       if (factory) {
         return factory(id);
       }
@@ -80,6 +85,9 @@ export function createRegistry(config?: ProviderConfig): ProviderRegistry {
       throw new Error(
         `No provider found for model "${modelId}". Set API keys for your providers.`
       );
+    },
+    hasProvider(name: string): boolean {
+      return Boolean(factories[name]);
     },
   };
 }
