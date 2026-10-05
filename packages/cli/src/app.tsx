@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-import React, { useCallback, useEffect, useState } from "react";
-import { render, Box, Text, useInput, useApp } from "ink";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { render, Box, Text, Static, useInput, useApp } from "ink";
 import TextInput from "ink-text-input";
 import Spinner from "ink-spinner";
 import type { CommandModule } from "yargs";
@@ -36,6 +36,7 @@ export interface RunCommandArgs {
 }
 
 type TranscriptItem =
+  | { kind: "banner" }
   | { kind: "user"; text: string }
   | { kind: "assistant"; text: string; model?: string; cost?: number }
   | { kind: "error"; text: string }
@@ -45,6 +46,14 @@ interface PermissionRequestState {
   toolName: string;
   input: unknown;
   resolve: (allowed: boolean) => void;
+}
+
+interface SessionStats {
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  dailySpentUsd: number;
+  dailyBudgetUsd: number;
 }
 
 let permissionBridge: ((req: PermissionRequestState) => void) | null = null;
@@ -101,11 +110,102 @@ function createRuntime() {
   return { agent, config };
 }
 
+function Banner() {
+  return (
+    <Box
+      borderStyle="round"
+      borderColor="orange"
+      paddingX={1}
+      flexDirection="column"
+    >
+      <Text bold color="orange" wrap="truncate-end">
+        ▄▄▄      ▄▄▄                                    ▄▄▄▄   ▄▄▄▄▄
+      </Text>
+      <Text bold color="orange" wrap="truncate-end">
+        ████▄  ▄████        ██    ██        ▀▀        ▄██▀▀██▄  ███
+      </Text>
+      <Text bold color="orange" wrap="truncate-end">
+        ███▀████▀███ ▄███▄ ▀██▀▀ ▀██▀▀ ▀▀█▄ ██  ████▄ ███  ███  ███
+      </Text>
+      <Text bold color="orange" wrap="truncate-end">
+        ███  ▀▀  ███ ██ ██  ██    ██  ▄█▀██ ██  ██ ██ ███▀▀███  ███
+      </Text>
+      <Text bold color="orange" wrap="truncate-end">
+        ███      ███ ▀███▀  ██    ██  ▀█▄██ ██▄ ██ ██ ███  ███ ▄███▄
+      </Text>
+      <Box marginTop={1}>
+        <Text color="gray"> — AI coding assistant with cost routing</Text>
+      </Box>
+    </Box>
+  );
+}
+
+function TranscriptEntry({ item }: { item: TranscriptItem }) {
+  switch (item.kind) {
+    case "banner":
+      return <Banner />;
+    case "user":
+      return (
+        <Box>
+          <Text bold color="green">
+            You:{" "}
+          </Text>
+          <Text wrap="wrap">{item.text}</Text>
+        </Box>
+      );
+    case "assistant":
+      return (
+        <Box flexDirection="column">
+          <Box>
+            <Text bold color="blue">
+              AI:{" "}
+            </Text>
+            <Text wrap="wrap">{item.text}</Text>
+          </Box>
+          {(item.model || item.cost != null) && (
+            <Text dimColor color="gray">
+              {"    "}
+              {item.model ?? ""}
+              {item.cost != null ? ` · $${item.cost.toFixed(4)}` : ""}
+            </Text>
+          )}
+        </Box>
+      );
+    case "error":
+      return (
+        <Box>
+          <Text bold color="red">
+            Err:{" "}
+          </Text>
+          <Text color="red" wrap="wrap">
+            {item.text}
+          </Text>
+        </Box>
+      );
+    case "activity":
+      return (
+        <Text dimColor color="gray" wrap="truncate-end">
+          {"  "}
+          {item.text}
+        </Text>
+      );
+  }
+}
+
 function App() {
   const [items, setItems] = useState<TranscriptItem[]>([]);
   const [input, setInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentText, setCurrentText] = useState("");
+  const [currentStep, setCurrentStep] = useState(0);
+  const [lastModel, setLastModel] = useState<string | null>(null);
+  const [stats, setStats] = useState<SessionStats>({
+    costUsd: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    dailySpentUsd: 0,
+    dailyBudgetUsd: 0,
+  });
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [permissionRequest, setPermissionRequest] =
@@ -113,6 +213,11 @@ function App() {
   const { exit } = useApp();
 
   const { agent } = getRuntime();
+
+  const staticItems = useMemo<TranscriptItem[]>(
+    () => [{ kind: "banner" }, ...items],
+    [items],
+  );
 
   useEffect(() => {
     permissionBridge = (req) => setPermissionRequest(req);
@@ -131,6 +236,7 @@ function App() {
       setInput("");
       setIsProcessing(true);
       setCurrentText("");
+      setCurrentStep(0);
 
       let accumulated = "";
 
@@ -144,6 +250,7 @@ function App() {
                 setCurrentText("");
               }
               if (d?.model) {
+                setLastModel(d.model.displayName ?? d.model.id);
                 setItems((prev) => [
                   ...prev,
                   {
@@ -154,6 +261,9 @@ function App() {
               }
               break;
             }
+            case "thinking":
+              setCurrentStep(event.data.step ?? 0);
+              break;
             case "text":
               accumulated += event.data.text;
               setCurrentText(accumulated);
@@ -201,6 +311,17 @@ function App() {
                   },
                 ]);
               }
+              if (d?.usage) {
+                setStats((prev) => ({
+                  costUsd: prev.costUsd + Number(d.usage.costUsd ?? 0),
+                  inputTokens:
+                    prev.inputTokens + Number(d.usage.inputTokens ?? 0),
+                  outputTokens:
+                    prev.outputTokens + Number(d.usage.outputTokens ?? 0),
+                  dailySpentUsd: Number(d.budget?.dailySpentUsd ?? 0),
+                  dailyBudgetUsd: Number(d.budget?.dailyBudgetUsd ?? 0),
+                }));
+              }
               break;
             }
           }
@@ -216,6 +337,7 @@ function App() {
       } finally {
         setIsProcessing(false);
         setCurrentText("");
+        setCurrentStep(0);
       }
     },
     [agent, isProcessing],
@@ -265,88 +387,19 @@ function App() {
     }
   });
 
+  const totalTokens = stats.inputTokens + stats.outputTokens;
+
   return (
-    <Box flexDirection="column" padding={1}>
-      <Box
-        borderStyle="round"
-        borderColor="orange"
-        marginBottom={1}
-        paddingX={1}
-        flexDirection="column"
-      >
-        <Text bold color="orange" wrap="truncate-end">
-          ▄▄▄      ▄▄▄                                    ▄▄▄▄   ▄▄▄▄▄
-        </Text>
-        <Text bold color="orange" wrap="truncate-end">
-          ████▄  ▄████        ██    ██        ▀▀        ▄██▀▀██▄  ███
-        </Text>
-        <Text bold color="orange" wrap="truncate-end">
-          ███▀████▀███ ▄███▄ ▀██▀▀ ▀██▀▀ ▀▀█▄ ██  ████▄ ███  ███  ███
-        </Text>
-        <Text bold color="orange" wrap="truncate-end">
-          ███  ▀▀  ███ ██ ██  ██    ██  ▄█▀██ ██  ██ ██ ███▀▀███  ███
-        </Text>
-        <Text bold color="orange" wrap="truncate-end">
-          ███      ███ ▀███▀  ██    ██  ▀█▄██ ██▄ ██ ██ ███  ███ ▄███▄
-        </Text>
-        <Box marginTop={1}>
-          <Text color="gray"> — AI coding assistant with cost routing</Text>
-        </Box>
-      </Box>
+    <Box flexDirection="column">
+      <Static items={staticItems}>
+        {(item, index) => (
+          <Box key={index} marginBottom={item.kind === "activity" ? 0 : 1} paddingLeft={1} paddingRight={1}>
+            <TranscriptEntry item={item} />
+          </Box>
+        )}
+      </Static>
 
-      <Box flexDirection="column" marginBottom={1}>
-        {items.map((item, i) => {
-          switch (item.kind) {
-            case "user":
-              return (
-                <Box key={i} marginBottom={1}>
-                  <Text bold color="green">
-                    You:{" "}
-                  </Text>
-                  <Text wrap="wrap">{item.text}</Text>
-                </Box>
-              );
-            case "assistant":
-              return (
-                <Box key={i} marginBottom={1} flexDirection="column">
-                  <Box>
-                    <Text bold color="blue">
-                      AI:{" "}
-                    </Text>
-                    <Text wrap="wrap">{item.text}</Text>
-                  </Box>
-                  {(item.model || item.cost != null) && (
-                    <Text dimColor color="gray">
-                      {"    "}
-                      {item.model ?? ""}
-                      {item.cost != null ? ` · $${item.cost.toFixed(4)}` : ""}
-                    </Text>
-                  )}
-                </Box>
-              );
-            case "error":
-              return (
-                <Box key={i} marginBottom={1}>
-                  <Text bold color="red">
-                    Err:{" "}
-                  </Text>
-                  <Text color="red" wrap="wrap">
-                    {item.text}
-                  </Text>
-                </Box>
-              );
-            case "activity":
-              return (
-                <Box key={i}>
-                  <Text dimColor color="gray" wrap="truncate-end">
-                    {"  "}
-                    {item.text}
-                  </Text>
-                </Box>
-              );
-          }
-        })}
-
+      <Box flexDirection="column" paddingX={1}>
         {isProcessing && currentText && (
           <Box marginBottom={1}>
             <Text bold color="blue">
@@ -356,49 +409,59 @@ function App() {
           </Box>
         )}
 
-        {isProcessing && !currentText && (
-          <Box>
+        {isProcessing && !currentText && !permissionRequest && (
+          <Box marginBottom={1}>
             <Text color="yellow">
               <Spinner type="dots" /> Thinking...
+              {currentStep > 1 ? ` (step ${currentStep})` : ""}
             </Text>
           </Box>
         )}
-      </Box>
 
-      {permissionRequest && (
-        <Box
-          borderStyle="round"
-          borderColor="yellow"
-          paddingX={1}
-          flexDirection="column"
-          marginBottom={1}
-        >
-          <Text bold color="yellow">
-            Allow {permissionRequest.toolName}?
-          </Text>
-          <Text color="gray" wrap="truncate-end">
-            {truncate(JSON.stringify(permissionRequest.input), 200)}
-          </Text>
-          <Text color="white">[y] allow / [n] deny</Text>
+        {permissionRequest && (
+          <Box
+            borderStyle="round"
+            borderColor="yellow"
+            paddingX={1}
+            flexDirection="column"
+            marginBottom={1}
+          >
+            <Text bold color="yellow">
+              Allow {permissionRequest.toolName}?
+            </Text>
+            <Text color="gray" wrap="truncate-end">
+              {truncate(JSON.stringify(permissionRequest.input), 200)}
+            </Text>
+            <Text color="white">[y] allow / [n] deny</Text>
+          </Box>
+        )}
+
+        <Box borderStyle="round" borderColor={isProcessing ? "gray" : "orange"} paddingX={1}>
+          <Text color="green">{"> "}</Text>
+          <TextInput
+            value={input}
+            onChange={setInput}
+            onSubmit={handleSubmit}
+            focus={!isProcessing && !permissionRequest}
+            showCursor
+            placeholder="Ask anything about your code..."
+          />
         </Box>
-      )}
 
-      <Box borderStyle="round" borderColor="gray" paddingX={1}>
-        <Text color="green">{"> "}</Text>
-        <TextInput
-          value={input}
-          onChange={setInput}
-          onSubmit={handleSubmit}
-          focus={!isProcessing && !permissionRequest}
-          showCursor
-          placeholder="Ask anything about your code..."
-        />
-      </Box>
-
-      <Box marginTop={1}>
-        <Text color="gray">
-          Enter to send · ↑/↓ history · Ctrl+C to exit
-        </Text>
+        <Box marginTop={1} justifyContent="space-between">
+          <Text dimColor color="gray" wrap="truncate-end">
+            {isProcessing
+              ? `${lastModel ?? "routing"}… · step ${Math.max(currentStep, 1)}`
+              : "Enter to send · ↑/↓ history · Ctrl+C to exit"}
+          </Text>
+          <Text dimColor color="gray" wrap="truncate-end">
+            {lastModel ? `${lastModel} · ` : ""}session $
+            {stats.costUsd.toFixed(4)} · {totalTokens} tok
+            {stats.dailyBudgetUsd > 0
+              ? ` · today $${stats.dailySpentUsd.toFixed(2)}/$${stats.dailyBudgetUsd.toFixed(0)}`
+              : ""}
+          </Text>
+        </Box>
       </Box>
     </Box>
   );
@@ -459,8 +522,7 @@ export const RunCommand: CommandModule<{}, RunCommandArgs> = {
       })
       .option("no-replay", {
         type: "boolean",
-        describe:
-          "disable mini session history replay on resize",
+        describe: "disable mini session history replay on resize",
       })
       .option("replay-limit", {
         type: "number",
