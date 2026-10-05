@@ -1,11 +1,9 @@
-import { generateText, stepCountIs, tool, type ModelMessage } from "ai";
-import { z } from "zod";
-import { LLMRouter, type RoutingDecision } from "@mottainai/router";
+import { streamText, stepCountIs, tool, type ModelMessage } from "ai";
+import { LLMRouter, calculateCost, estimateChatTokens } from "@mottainai/router";
 import { builtInTools, type ToolContext } from "@mottainai/tools";
 import {
   createSession,
   addMessage,
-  getMessagesForLLM,
   compactSession,
   type Session,
 } from "./session";
@@ -28,14 +26,28 @@ export interface AgentEvent {
   data: any;
 }
 
+function contentToText(content: ModelMessage["content"]): string {
+  if (typeof content === "string") return content;
+  let text = "";
+  for (const part of content as Array<{ type: string; text?: string }>) {
+    if (part.type === "text" && part.text) text += part.text;
+  }
+  return text;
+}
+
+function historyAsText(
+  messages: ModelMessage[]
+): Array<{ role: string; content: string }> {
+  return messages.map((m) => ({ role: m.role, content: contentToText(m.content) }));
+}
+
 export class Agent {
   private router: LLMRouter;
   private config: AgentConfig;
   private session: Session;
   private providers: any;
-  private eventQueue: AgentEvent[] = [];
-  private eventResolve: ((value: IteratorResult<AgentEvent>) => void) | null =
-    null;
+  private history: ModelMessage[] = [];
+  private abortController: AbortController | null = null;
 
   constructor(
     providers: any,
@@ -52,13 +64,17 @@ export class Agent {
     this.session = createSession();
   }
 
-  private emit(event: AgentEvent): void {
-    if (this.eventResolve) {
-      const resolve = this.eventResolve;
-      this.eventResolve = null;
-      resolve({ value: event, done: false });
-    } else {
-      this.eventQueue.push(event);
+  abort(): void {
+    this.abortController?.abort();
+  }
+
+  private trimHistory(maxTokens: number = 80_000): void {
+    while (estimateChatTokens(historyAsText(this.history)) > maxTokens) {
+      const nextUser = this.history.findIndex(
+        (m, i) => i > 0 && m.role === "user"
+      );
+      if (nextUser <= 0) break;
+      this.history.splice(0, nextUser);
     }
   }
 
@@ -66,16 +82,15 @@ export class Agent {
     userMessage: string
   ): AsyncGenerator<AgentEvent, void, unknown> {
     addMessage(this.session, { role: "user", content: userMessage });
-
-    const rawMessages = getMessagesForLLM(this.session);
-    const llmMessages = rawMessages as ModelMessage[];
+    this.history.push({ role: "user", content: userMessage });
+    this.trimHistory();
 
     const routing = this.router.route({
-      messages: rawMessages,
+      messages: historyAsText(this.history),
       needsTools: true,
     });
 
-    this.emit({ type: "routing", data: routing });
+    yield { type: "routing", data: routing };
 
     const model = this.providers.getModel(routing.model.id);
 
@@ -90,91 +105,113 @@ export class Agent {
         description: t.description,
         inputSchema: t.inputSchema,
         execute: async (input: any) => {
-          const result = await t.execute(input, toolCtx);
-          return result;
+          return await t.execute(input, toolCtx);
         },
       });
     }
 
-    const messages: ModelMessage[] = [
-      ...(this.config.systemPrompt
-        ? [
-            {
-              role: "system" as const,
-              content: this.config.systemPrompt,
-            },
-          ]
-        : []),
-      ...llmMessages,
-    ];
-
+    this.abortController = new AbortController();
     let step = 0;
     let fullText = "";
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let failed = false;
 
-    while (step < (this.config.maxSteps || 20)) {
-      this.emit({ type: "thinking", data: { step: step + 1 } });
+    try {
+      const result = streamText({
+        model,
+        system: this.config.systemPrompt,
+        messages: this.history,
+        tools,
+        stopWhen: stepCountIs(this.config.maxSteps || 20),
+        abortSignal: this.abortController.signal,
+      });
 
-      try {
-        const result = await generateText({
-          model,
-          messages,
-          tools,
-          stopWhen: stepCountIs(1),
-        });
-
-        if (result.toolCalls && result.toolCalls.length > 0) {
-          for (const tc of result.toolCalls) {
-            this.emit({
+      for await (const part of result.fullStream) {
+        switch (part.type) {
+          case "start-step":
+            step++;
+            yield { type: "thinking", data: { step } };
+            break;
+          case "text-delta":
+            fullText += part.text;
+            yield { type: "text", data: { text: part.text } };
+            break;
+          case "tool-call":
+            yield {
               type: "tool_call",
-              data: { name: tc.toolName, args: tc.input },
-            });
-
-            const toolResult = result.toolResults?.find(
-              (r) => r.toolCallId === tc.toolCallId
-            );
-            if (toolResult) {
-              this.emit({
-                type: "tool_result",
-                data: { name: tc.toolName, result: toolResult.output },
-              });
-            }
-          }
+              data: { name: part.toolName, args: part.input },
+            };
+            break;
+          case "tool-result":
+            yield {
+              type: "tool_result",
+              data: { name: part.toolName, result: part.output },
+            };
+            break;
+          case "tool-error":
+            yield {
+              type: "tool_result",
+              data: { name: part.toolName, result: String(part.error) },
+            };
+            break;
+          case "error":
+            failed = true;
+            yield {
+              type: "error",
+              data: {
+                error:
+                  part.error instanceof Error
+                    ? part.error.message
+                    : String(part.error),
+              },
+            };
+            break;
         }
-
-        if (result.text) {
-          fullText += result.text;
-          this.emit({ type: "text", data: { text: result.text } });
-        }
-
-        break;
-      } catch (error) {
-        this.emit({
-          type: "error",
-          data: {
-            error: error instanceof Error ? error.message : String(error),
-          },
-        });
-        break;
       }
+
+      if (!failed) {
+        const response = await result.response;
+        this.history.push(...response.messages);
+        const usage = await result.usage;
+        inputTokens = usage.inputTokens ?? 0;
+        outputTokens = usage.outputTokens ?? 0;
+      }
+    } catch (error) {
+      failed = true;
+      yield {
+        type: "error",
+        data: {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      };
+    } finally {
+      this.abortController = null;
     }
+
+    const costUsd = failed
+      ? 0
+      : calculateCost(routing.model, inputTokens, outputTokens);
 
     if (fullText) {
       addMessage(this.session, {
         role: "assistant",
         content: fullText,
         model: routing.model.id,
+        cost: costUsd,
       });
     }
 
     compactSession(this.session);
 
-    this.emit({
+    yield {
       type: "done",
       data: {
         session: this.session,
         routing,
+        usage: { inputTokens, outputTokens, costUsd },
       },
-    });
+    };
   }
 
   getSession(): Session {
