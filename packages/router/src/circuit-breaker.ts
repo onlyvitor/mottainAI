@@ -49,15 +49,15 @@ export class CircuitBreaker {
 
     try {
       const result = await fn();
-      this.onSuccess();
+      this.recordSuccess();
       return result;
     } catch (error) {
-      this.onFailure();
+      this.recordFailure();
       throw error;
     }
   }
 
-  private onSuccess(): void {
+  recordSuccess(): void {
     this.failureCount = 0;
 
     if (this.state === CircuitState.HALF_OPEN) {
@@ -68,7 +68,7 @@ export class CircuitBreaker {
     }
   }
 
-  private onFailure(): void {
+  recordFailure(): void {
     this.lastFailureTime = Date.now();
 
     if (this.state === CircuitState.HALF_OPEN) {

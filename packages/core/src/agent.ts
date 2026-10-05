@@ -1,5 +1,12 @@
 import { streamText, stepCountIs, tool, type ModelMessage } from "ai";
-import { LLMRouter, calculateCost, estimateChatTokens } from "@mottainai/router";
+import {
+  LLMRouter,
+  calculateCost,
+  estimateChatTokens,
+  getModel as getCatalogModel,
+  type ModelPricing,
+  type RoutingDecision,
+} from "@mottainai/router";
 import { builtInTools, type ToolContext } from "@mottainai/tools";
 import { loadDailySpend, recordSpend } from "./budget";
 import {
@@ -80,6 +87,22 @@ export class Agent {
     }
   }
 
+  private buildAttempts(routing: RoutingDecision): ModelPricing[] {
+    const attempts: ModelPricing[] = [routing.model];
+    const seen = new Set([routing.model.id]);
+
+    for (const id of routing.fallback) {
+      if (seen.has(id)) continue;
+      const model = getCatalogModel(id);
+      if (!model) continue;
+      if (this.providers.hasProvider?.(model.provider) === false) continue;
+      seen.add(id);
+      attempts.push(model);
+    }
+
+    return attempts;
+  }
+
   async *run(
     userMessage: string
   ): AsyncGenerator<AgentEvent, void, unknown> {
@@ -117,11 +140,6 @@ export class Agent {
 
     yield { type: "routing", data: routing };
 
-    const model = this.providers.getModel(
-      routing.model.id,
-      routing.model.provider
-    );
-
     const toolCtx: ToolContext = {
       workingDirectory: this.config.workingDirectory!,
       sessionId: this.session.id,
@@ -138,94 +156,145 @@ export class Agent {
       });
     }
 
-    this.abortController = new AbortController();
-    let step = 0;
+    const attempts = this.buildAttempts(routing);
+
+    let succeeded = false;
+    let aborted = false;
+    let lastError = "";
+    let usedModel = routing.model;
     let fullText = "";
     let inputTokens = 0;
     let outputTokens = 0;
-    let failed = false;
 
-    try {
-      const result = streamText({
-        model,
-        system: this.config.systemPrompt,
-        messages: this.history,
-        tools,
-        stopWhen: stepCountIs(this.config.maxSteps || 20),
-        abortSignal: this.abortController.signal,
-      });
+    for (const [attemptIndex, attemptModel] of attempts.entries()) {
+      const breaker = this.router.getBreaker(attemptModel.id);
+      if (
+        breaker &&
+        !breaker.isAvailable() &&
+        attemptIndex < attempts.length - 1
+      ) {
+        continue;
+      }
 
-      for await (const part of result.fullStream) {
-        switch (part.type) {
-          case "start-step":
-            step++;
-            yield { type: "thinking", data: { step } };
-            break;
-          case "text-delta":
-            fullText += part.text;
-            yield { type: "text", data: { text: part.text } };
-            break;
-          case "tool-call":
-            yield {
-              type: "tool_call",
-              data: { name: part.toolName, args: part.input },
-            };
-            break;
-          case "tool-result":
-            yield {
-              type: "tool_result",
-              data: { name: part.toolName, result: part.output },
-            };
-            break;
-          case "tool-error":
-            yield {
-              type: "tool_result",
-              data: { name: part.toolName, result: String(part.error) },
-            };
-            break;
-          case "error":
-            failed = true;
-            yield {
-              type: "error",
-              data: {
-                error:
-                  part.error instanceof Error
-                    ? part.error.message
-                    : String(part.error),
-              },
-            };
-            break;
+      if (attemptIndex > 0) {
+        yield {
+          type: "routing",
+          data: {
+            ...routing,
+            model: attemptModel,
+            reason: `Fallback after error: ${lastError}`,
+          },
+        };
+      }
+
+      let step = 0;
+      fullText = "";
+      let failed = false;
+      this.abortController = new AbortController();
+
+      try {
+        const model = this.providers.getModel(
+          attemptModel.id,
+          attemptModel.provider
+        );
+
+        const result = streamText({
+          model,
+          system: this.config.systemPrompt,
+          messages: this.history,
+          tools,
+          stopWhen: stepCountIs(this.config.maxSteps || 20),
+          abortSignal: this.abortController.signal,
+        });
+
+        for await (const part of result.fullStream) {
+          switch (part.type) {
+            case "start-step":
+              step++;
+              yield { type: "thinking", data: { step } };
+              break;
+            case "text-delta":
+              fullText += part.text;
+              yield { type: "text", data: { text: part.text } };
+              break;
+            case "tool-call":
+              yield {
+                type: "tool_call",
+                data: { name: part.toolName, args: part.input },
+              };
+              break;
+            case "tool-result":
+              yield {
+                type: "tool_result",
+                data: { name: part.toolName, result: part.output },
+              };
+              break;
+            case "tool-error":
+              yield {
+                type: "tool_result",
+                data: { name: part.toolName, result: String(part.error) },
+              };
+              break;
+            case "error":
+              failed = true;
+              lastError =
+                part.error instanceof Error
+                  ? part.error.message
+                  : String(part.error);
+              break;
+          }
         }
+
+        if (this.abortController.signal.aborted) {
+          aborted = true;
+          break;
+        }
+
+        if (!failed) {
+          const response = await result.response;
+          this.history.push(...response.messages);
+          const usage = await result.usage;
+          inputTokens = usage.inputTokens ?? 0;
+          outputTokens = usage.outputTokens ?? 0;
+          breaker?.recordSuccess();
+          usedModel = attemptModel;
+          succeeded = true;
+        } else {
+          breaker?.recordFailure();
+        }
+      } catch (error) {
+        if (this.abortController?.signal.aborted) {
+          aborted = true;
+          break;
+        }
+        failed = true;
+        lastError = error instanceof Error ? error.message : String(error);
+        breaker?.recordFailure();
+      } finally {
+        this.abortController = null;
       }
 
-      if (!failed) {
-        const response = await result.response;
-        this.history.push(...response.messages);
-        const usage = await result.usage;
-        inputTokens = usage.inputTokens ?? 0;
-        outputTokens = usage.outputTokens ?? 0;
-      }
-    } catch (error) {
-      failed = true;
-      yield {
-        type: "error",
-        data: {
-          error: error instanceof Error ? error.message : String(error),
-        },
-      };
-    } finally {
-      this.abortController = null;
+      if (succeeded || aborted) break;
     }
 
-    const costUsd = failed
-      ? 0
-      : calculateCost(routing.model, inputTokens, outputTokens);
+    if (aborted) {
+      yield { type: "error", data: { error: "Cancelled by user" } };
+    } else if (!succeeded) {
+      yield {
+        type: "error",
+        data: { error: lastError || "All model attempts failed" },
+      };
+    }
 
-    if (fullText) {
+    const costUsd = succeeded
+      ? calculateCost(usedModel, inputTokens, outputTokens)
+      : 0;
+
+    if (succeeded && fullText) {
       addMessage(this.session, {
         role: "assistant",
         content: fullText,
-        model: routing.model.id,
+        model: usedModel.id,
         cost: costUsd,
       });
     }
@@ -238,7 +307,7 @@ export class Agent {
       type: "done",
       data: {
         session: this.session,
-        routing,
+        routing: succeeded ? { ...routing, model: usedModel } : null,
         usage: { inputTokens, outputTokens, costUsd },
         budget: { dailySpentUsd, dailyBudgetUsd: dailyBudget ?? 0 },
       },
