@@ -1,4 +1,4 @@
-import { generateText, tool, type CoreMessage } from "ai";
+import { generateText, stepCountIs, tool, type ModelMessage } from "ai";
 import { z } from "zod";
 import { LLMRouter, type RoutingDecision } from "@mottainai/router";
 import { builtInTools, type ToolContext } from "@mottainai/tools";
@@ -68,7 +68,7 @@ export class Agent {
     addMessage(this.session, { role: "user", content: userMessage });
 
     const rawMessages = getMessagesForLLM(this.session);
-    const llmMessages = rawMessages as CoreMessage[];
+    const llmMessages = rawMessages as ModelMessage[];
 
     const routing = this.router.route({
       messages: rawMessages,
@@ -88,13 +88,25 @@ export class Agent {
     for (const t of builtInTools) {
       tools[t.name] = tool({
         description: t.description,
-        parameters: t.inputSchema,
+        inputSchema: t.inputSchema,
         execute: async (input: any) => {
           const result = await t.execute(input, toolCtx);
           return result;
         },
       });
     }
+
+    const messages: ModelMessage[] = [
+      ...(this.config.systemPrompt
+        ? [
+            {
+              role: "system" as const,
+              content: this.config.systemPrompt,
+            },
+          ]
+        : []),
+      ...llmMessages,
+    ];
 
     let step = 0;
     let fullText = "";
@@ -105,29 +117,16 @@ export class Agent {
       try {
         const result = await generateText({
           model,
-          messages:
-            step === 0
-              ? ([
-                  ...(this.config.systemPrompt
-                    ? [
-                        {
-                          role: "system" as const,
-                          content: this.config.systemPrompt,
-                        },
-                      ]
-                    : []),
-                  ...llmMessages,
-                ] as CoreMessage[])
-              : undefined,
+          messages,
           tools,
-          maxSteps: 1,
+          stopWhen: stepCountIs(1),
         });
 
         if (result.toolCalls && result.toolCalls.length > 0) {
           for (const tc of result.toolCalls) {
             this.emit({
               type: "tool_call",
-              data: { name: tc.toolName, args: tc.args },
+              data: { name: tc.toolName, args: tc.input },
             });
 
             const toolResult = result.toolResults?.find(
@@ -136,7 +135,7 @@ export class Agent {
             if (toolResult) {
               this.emit({
                 type: "tool_result",
-                data: { name: tc.toolName, result: toolResult.result },
+                data: { name: tc.toolName, result: toolResult.output },
               });
             }
           }
@@ -147,11 +146,7 @@ export class Agent {
           this.emit({ type: "text", data: { text: result.text } });
         }
 
-        if (!result.toolCalls || result.toolCalls.length === 0) {
-          break;
-        }
-
-        step++;
+        break;
       } catch (error) {
         this.emit({
           type: "error",
