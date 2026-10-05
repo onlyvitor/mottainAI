@@ -134,7 +134,7 @@ export class LLMRouter {
       }
       model = found;
     } else {
-      model = this.pickCheapestCapable(targetTier, request);
+      model = this.pickCheapestCapable(targetTier, request, rule.action.maxCost);
     }
 
     const inputTokens = estimateChatTokens(request.messages);
@@ -170,7 +170,8 @@ export class LLMRouter {
 
   private pickCheapestCapable(
     tier: ComplexityTier,
-    request: RoutingRequest
+    request: RoutingRequest,
+    maxCost?: number
   ): ModelPricing {
     const tierMap: Record<ComplexityTier, ModelPricing["tier"][]> = {
       SIMPLE: ["BUDGET"],
@@ -194,9 +195,15 @@ export class LLMRouter {
       return MODEL_CATALOG[0]!;
     }
 
-    return candidates.sort(
-      (a, b) => a.inputCostPer1M - b.inputCostPer1M
-    )[0]!;
+    const inputTokens = estimateChatTokens(request.messages);
+    const budget = maxCost ?? this.config.defaults.budget.perRequestUsd;
+    const affordable = candidates.filter(
+      (m) => calculateCost(m, inputTokens, 512) <= budget
+    );
+
+    const pool = affordable.length > 0 ? affordable : candidates;
+
+    return pool.sort((a, b) => a.inputCostPer1M - b.inputCostPer1M)[0]!;
   }
 
   getBreaker(modelId: string): CircuitBreaker | undefined {
