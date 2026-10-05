@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 import React, { useCallback, useEffect, useState } from "react";
 import { render, Box, Text, useInput, useApp } from "ink";
+import TextInput from "ink-text-input";
+import Spinner from "ink-spinner";
 import type { CommandModule } from "yargs";
 import { Agent } from "@mottainai/core";
 import { LLMRouter } from "@mottainai/router";
@@ -104,6 +106,8 @@ function App() {
   const [input, setInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentText, setCurrentText] = useState("");
+  const [history, setHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
   const [permissionRequest, setPermissionRequest] =
     useState<PermissionRequestState | null>(null);
   const { exit } = useApp();
@@ -122,6 +126,8 @@ function App() {
       if (!prompt.trim() || isProcessing) return;
 
       setItems((prev) => [...prev, { kind: "user", text: prompt }]);
+      setHistory((prev) => [...prev, prompt]);
+      setHistoryIndex(-1);
       setInput("");
       setIsProcessing(true);
       setCurrentText("");
@@ -232,21 +238,30 @@ function App() {
       return;
     }
 
-    if (key.return) {
-      if (input.trim() && !isProcessing) {
+    if (isProcessing) return;
+
+    if (key.upArrow) {
+      if (history.length === 0) return;
+      const next =
+        historyIndex === -1
+          ? history.length - 1
+          : Math.max(0, historyIndex - 1);
+      setHistoryIndex(next);
+      setInput(history[next] ?? "");
+      return;
+    }
+
+    if (key.downArrow) {
+      if (historyIndex === -1) return;
+      const next = historyIndex + 1;
+      if (next >= history.length) {
+        setHistoryIndex(-1);
         setInput("");
-        handleSubmit(input);
+      } else {
+        setHistoryIndex(next);
+        setInput(history[next] ?? "");
       }
       return;
-    }
-
-    if (key.backspace || key.delete) {
-      setInput((current) => current.slice(0, -1));
-      return;
-    }
-
-    if (!isProcessing && char) {
-      setInput(input + char);
     }
   });
 
@@ -343,7 +358,9 @@ function App() {
 
         {isProcessing && !currentText && (
           <Box>
-            <Text color="yellow">Thinking...</Text>
+            <Text color="yellow">
+              <Spinner type="dots" /> Thinking...
+            </Text>
           </Box>
         )}
       </Box>
@@ -368,14 +385,19 @@ function App() {
 
       <Box borderStyle="round" borderColor="gray" paddingX={1}>
         <Text color="green">{"> "}</Text>
-        <Text color="white" wrap="truncate-end">
-          {input}
-        </Text>
+        <TextInput
+          value={input}
+          onChange={setInput}
+          onSubmit={handleSubmit}
+          focus={!isProcessing && !permissionRequest}
+          showCursor
+          placeholder="Ask anything about your code..."
+        />
       </Box>
 
       <Box marginTop={1}>
         <Text color="gray">
-          Type your message and press Enter. Ctrl+C to exit.
+          Enter to send · ↑/↓ history · Ctrl+C to exit
         </Text>
       </Box>
     </Box>
