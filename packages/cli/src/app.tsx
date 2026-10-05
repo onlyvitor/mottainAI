@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { render, Box, Text, Static, useInput, useApp } from "ink";
+import { render, Box, Text, Static, useInput, useApp, useStdout } from "ink";
 import TextInput from "ink-text-input";
 import Spinner from "ink-spinner";
 import type { CommandModule } from "yargs";
@@ -211,6 +211,7 @@ function App() {
   const [permissionRequest, setPermissionRequest] =
     useState<PermissionRequestState | null>(null);
   const { exit } = useApp();
+  const stdout = useStdout();
 
   const { agent } = getRuntime();
 
@@ -227,8 +228,55 @@ function App() {
   }, []);
 
   const handleSubmit = useCallback(
-    async (prompt: string) => {
-      if (!prompt.trim() || isProcessing) return;
+    async (raw: string) => {
+      const prompt = raw.trim();
+      if (!prompt || isProcessing) return;
+
+      if (prompt.startsWith("/")) {
+        const [cmd] = prompt.slice(1).split(" ");
+        switch (cmd) {
+          case "exit":
+            exit();
+            return;
+          case "clear":
+            stdout.write("\x1b[2J\x1b[1;1H");
+            setItems([]);
+            setHistory([]);
+            setHistoryIndex(-1);
+            setLastModel(null);
+            setStats({
+              costUsd: 0,
+              inputTokens: 0,
+              outputTokens: 0,
+              dailySpentUsd: 0,
+              dailyBudgetUsd: 0,
+            });
+            return;
+          case "help":
+            setItems((prev) => [
+              ...prev,
+              {
+                kind: "assistant",
+                text: [
+                  "/help - show this help",
+                  "/clear - clear the conversation and stats",
+                  "/exit - quit mottainai",
+                  "Ctrl+C - cancel the current run, or quit when idle",
+                ].join("\n"),
+              },
+            ]);
+            return;
+          default:
+            setItems((prev) => [
+              ...prev,
+              {
+                kind: "error",
+                text: `Unknown command: /${cmd}. Try /help`,
+              },
+            ]);
+            return;
+        }
+      }
 
       setItems((prev) => [...prev, { kind: "user", text: prompt }]);
       setHistory((prev) => [...prev, prompt]);
@@ -295,7 +343,12 @@ function App() {
             case "error":
               setItems((prev) => [
                 ...prev,
-                { kind: "error", text: String(event.data.error) },
+                String(event.data.error) === "Cancelled by user"
+                  ? {
+                      kind: "activity",
+                      text: "· run cancelled by user",
+                    }
+                  : { kind: "error", text: String(event.data.error) },
               ]);
               break;
             case "done": {
@@ -340,12 +393,16 @@ function App() {
         setCurrentStep(0);
       }
     },
-    [agent, isProcessing],
+    [agent, isProcessing, exit],
   );
 
   useInput((char, key) => {
     if (key.ctrl && char === "c") {
-      exit();
+      if (isProcessing) {
+        agent.abort();
+      } else {
+        exit();
+      }
       return;
     }
 
@@ -451,8 +508,8 @@ function App() {
         <Box marginTop={1} justifyContent="space-between">
           <Text dimColor color="gray" wrap="truncate-end">
             {isProcessing
-              ? `${lastModel ?? "routing"}… · step ${Math.max(currentStep, 1)}`
-              : "Enter to send · ↑/↓ history · Ctrl+C to exit"}
+              ? `${lastModel ?? "routing"}… · step ${Math.max(currentStep, 1)} · Ctrl+C to cancel`
+              : "Enter to send · ↑/↓ history · /help for commands · Ctrl+C to exit"}
           </Text>
           <Text dimColor color="gray" wrap="truncate-end">
             {lastModel ? `${lastModel} · ` : ""}session $
