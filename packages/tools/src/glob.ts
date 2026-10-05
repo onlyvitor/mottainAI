@@ -15,10 +15,12 @@ export const globTool = createTool({
       .describe("Directory to search in"),
   }),
   async execute(input, ctx): Promise<ToolResult> {
+    const dir = input.path || ".";
+    const args = input.pattern.includes("/")
+      ? [dir, "-type", "f", "-path", `*${input.pattern}`]
+      : [dir, "-type", "f", "-name", input.pattern];
     return new Promise((resolve) => {
-      const proc = spawn(
-        "find",
-        [input.path, "-type", "f", "-name", input.pattern],
+      const proc = spawn("find", args,
         {
           cwd: ctx.workingDirectory,
           timeout: 10_000,
